@@ -188,9 +188,19 @@ DOCUMIND_API_BASE_URL=http://localhost:8000
 # Optional: delete PDFs after indexing
 DOCUMIND_DELETE_UPLOADED_PDFS=0
 
+# Optional: upload/indexing timeout for Streamlit -> backend (seconds)
+# Useful for large PDFs and cold starts
+DOCUMIND_UPLOAD_TIMEOUT_SECONDS=600
+
 # Optional: Hugging Face Hub timeouts
 HF_HUB_CONNECT_TIMEOUT=30
 HF_HUB_READ_TIMEOUT=120
+
+# Optional: Streamlit proxy/security flags
+# Local/dev default: true/true
+# HF Spaces default via start.sh: false/false (unless explicitly set)
+# STREAMLIT_ENABLE_CORS=true
+# STREAMLIT_ENABLE_XSRF_PROTECTION=true
 ```
 
 ### Qdrant local storage lock (important)
@@ -247,7 +257,16 @@ Variables (recommended):
 
 - `QDRANT_URL` (if using Qdrant Cloud)
 - `DOCUMIND_DELETE_UPLOADED_PDFS=1` (optional, useful on ephemeral disks)
+- `DOCUMIND_UPLOAD_TIMEOUT_SECONDS=600` (optional, for large PDFs/cold starts)
 - `QDRANT_PREFER_GRPC=0` (optional; HTTP/REST is often more reliable)
+- `STREAMLIT_ENABLE_CORS` (optional override)
+- `STREAMLIT_ENABLE_XSRF_PROTECTION` (optional override)
+
+Streamlit security defaults are environment-aware in `start.sh`:
+
+- Local/dev: `enableCORS=true`, `enableXsrfProtection=true`
+- HF Spaces: defaults to `false/false` for proxy compatibility
+- Explicit env vars always override defaults
 
 3) Configure deployment credentials in GitHub Actions.
 

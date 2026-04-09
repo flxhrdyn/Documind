@@ -9,9 +9,12 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import threading
+import time
 import uuid
+from typing import Any, Dict, Literal, Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 
 from .config import (
     DELETE_UPLOADED_PDFS,
@@ -29,16 +32,22 @@ logger = logging.getLogger(__name__)
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+UploadJobState = Literal["pending", "running", "succeeded", "failed"]
+_upload_jobs_lock = threading.Lock()
+_upload_jobs: Dict[str, Dict[str, Any]] = {}
 
-@router.post("/upload")
-def upload_pdf(file: UploadFile = File(...)):
-    """Upload a PDF and index it into Qdrant.
 
-    The file is written to `UPLOAD_DIR` first, then passed to the indexing
-    pipeline. If `DELETE_UPLOADED_PDFS=1`, the local file is removed after a
-    successful index.
-    """
+def _set_upload_job(job: Dict[str, Any]) -> None:
+    with _upload_jobs_lock:
+        _upload_jobs[job["job_id"]] = job
 
+
+def _get_upload_job(job_id: str) -> Optional[Dict[str, Any]]:
+    with _upload_jobs_lock:
+        return _upload_jobs.get(job_id)
+
+
+def _save_uploaded_pdf(file: UploadFile) -> str:
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename")
 
@@ -52,9 +61,13 @@ def upload_pdf(file: UploadFile = File(...)):
         file_path = os.path.join(UPLOAD_DIR, f"{stem}_{uuid.uuid4().hex[:8]}{ext}")
 
     with open(file_path, "wb") as f:
-        # Sync read to keep this endpoint as a normal (threadpooled) request.
+        # Sync read keeps this endpoint compatible with normal threadpooled handling.
         f.write(file.file.read())
 
+    return file_path
+
+
+def _index_uploaded_pdf(file_path: str) -> Dict[str, str]:
     # Index into Qdrant.
     try:
         index_documents(file_path)
@@ -76,6 +89,87 @@ def upload_pdf(file: UploadFile = File(...)):
             pass
 
     return {"status": "PDF indexed successfully", "filename": os.path.basename(file_path)}
+
+
+def _run_upload_job(job_id: str, file_path: str) -> None:
+    job = _get_upload_job(job_id)
+    if not job:
+        return
+
+    now = time.time()
+    job["status"] = "running"
+    job["updated_at"] = now
+    _set_upload_job(job)
+
+    try:
+        result = _index_uploaded_pdf(file_path)
+        now = time.time()
+        job["status"] = "succeeded"
+        job["result"] = result
+        job["updated_at"] = now
+        _set_upload_job(job)
+    except HTTPException as exc:
+        now = time.time()
+        job["status"] = "failed"
+        job["error"] = f"HTTP {exc.status_code}: {exc.detail}"
+        job["updated_at"] = now
+        _set_upload_job(job)
+    except Exception as exc:
+        logger.exception("Background upload job failed (job_id=%s)", job_id)
+        now = time.time()
+        job["status"] = "failed"
+        job["error"] = f"{type(exc).__name__}: {exc}"
+        job["updated_at"] = now
+        _set_upload_job(job)
+
+
+@router.post("/upload")
+def upload_pdf(file: UploadFile = File(...)):
+    """Upload a PDF and index it into Qdrant.
+
+    The file is written to `UPLOAD_DIR` first, then passed to the indexing
+    pipeline. If `DELETE_UPLOADED_PDFS=1`, the local file is removed after a
+    successful index.
+    """
+
+    file_path = _save_uploaded_pdf(file)
+    return _index_uploaded_pdf(file_path)
+
+
+@router.post("/upload/jobs")
+def create_upload_job(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    """Upload a PDF and index it in the background.
+
+    Returns a job object immediately so clients can poll status via
+    `/upload/jobs/{job_id}`.
+    """
+
+    file_path = _save_uploaded_pdf(file)
+
+    job_id = str(uuid.uuid4())
+    now = time.time()
+    job: Dict[str, Any] = {
+        "job_id": job_id,
+        "status": "pending",
+        "filename": os.path.basename(file_path),
+        "created_at": now,
+        "updated_at": now,
+        "result": None,
+        "error": None,
+    }
+    _set_upload_job(job)
+    background_tasks.add_task(_run_upload_job, job_id, file_path)
+    return job
+
+
+@router.get("/upload/jobs/{job_id}")
+def get_upload_job(job_id: str):
+    """Return upload/indexing job state."""
+
+    job = _get_upload_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
 
 
 @router.get("/documents")

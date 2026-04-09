@@ -23,12 +23,133 @@ API_BASE_URL = os.getenv("DOCUMIND_API_BASE_URL", "http://localhost:8000").rstri
 ACTIVE_PAGE_KEY = "documind_active_page"
 
 
+def _is_hf_spaces_runtime() -> bool:
+    return bool(os.getenv("SPACE_ID") or os.getenv("SPACE_HOST"))
+
+
+def _get_upload_timeout_seconds() -> int:
+    # Upload + indexing may take longer on cold starts, especially in HF Spaces.
+    default_timeout = 600 if _is_hf_spaces_runtime() else 120
+    raw = (os.getenv("DOCUMIND_UPLOAD_TIMEOUT_SECONDS") or "").strip()
+    if not raw:
+        return default_timeout
+
+    try:
+        value = int(raw)
+    except ValueError:
+        return default_timeout
+
+    return max(30, min(value, 3600))
+
+
+UPLOAD_TIMEOUT_SECONDS = _get_upload_timeout_seconds()
+UPLOAD_JOB_POLL_INTERVAL_SECONDS = 1.0
+UPLOAD_JOB_WAIT_SECONDS = min(UPLOAD_TIMEOUT_SECONDS, 300)
+UPLOAD_DURATION_HISTORY_KEY = "upload_duration_history"
+MAX_UPLOAD_DURATION_SAMPLES = 10
+
+
+def _get_assistant_typing_enabled() -> bool:
+    raw = (os.getenv("DOCUMIND_ASSISTANT_TYPING_EFFECT") or "1").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _get_assistant_word_delay_seconds() -> float:
+    raw = (os.getenv("DOCUMIND_ASSISTANT_TYPING_WORD_DELAY_SECONDS") or "0.016").strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.016
+    return max(0.0, min(value, 0.08))
+
+
+def _get_assistant_typing_max_words() -> int:
+    raw = (os.getenv("DOCUMIND_ASSISTANT_TYPING_MAX_WORDS") or "140").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 140
+    return max(20, min(value, 500))
+
+
+ASSISTANT_TYPING_ENABLED = _get_assistant_typing_enabled()
+ASSISTANT_TYPING_WORD_DELAY_SECONDS = _get_assistant_word_delay_seconds()
+ASSISTANT_TYPING_MAX_WORDS = _get_assistant_typing_max_words()
+
+
 def _set_active_page(page: str) -> None:
     st.session_state[ACTIVE_PAGE_KEY] = page
 
 
 def _is_chat_active() -> bool:
     return st.session_state.get(ACTIVE_PAGE_KEY, "chat") == "chat"
+
+
+def _get_upload_duration_history() -> list[float]:
+    history = st.session_state.get(UPLOAD_DURATION_HISTORY_KEY)
+    if isinstance(history, list):
+        clean: list[float] = []
+        for value in history:
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                continue
+            if numeric > 0:
+                clean.append(numeric)
+        st.session_state[UPLOAD_DURATION_HISTORY_KEY] = clean[-MAX_UPLOAD_DURATION_SAMPLES:]
+        return st.session_state[UPLOAD_DURATION_HISTORY_KEY]
+
+    st.session_state[UPLOAD_DURATION_HISTORY_KEY] = []
+    return st.session_state[UPLOAD_DURATION_HISTORY_KEY]
+
+
+def _record_upload_duration(seconds: float) -> None:
+    if seconds <= 0:
+        return
+    history = _get_upload_duration_history()
+    history.append(seconds)
+    st.session_state[UPLOAD_DURATION_HISTORY_KEY] = history[-MAX_UPLOAD_DURATION_SAMPLES:]
+
+
+def _estimate_upload_eta_seconds(elapsed_seconds: float) -> int | None:
+    history = _get_upload_duration_history()
+    if not history:
+        return None
+
+    avg_seconds = sum(history) / len(history)
+    remaining = int(round(avg_seconds - elapsed_seconds))
+    if remaining <= 0:
+        return 0
+    return remaining
+
+
+def _render_assistant_message(reply: str) -> None:
+    """Render assistant reply with a safe typing effect.
+
+    We animate short previews for UX, then always render the final full markdown
+    atomically to avoid broken layout after page switches/reruns.
+    """
+    if not ASSISTANT_TYPING_ENABLED:
+        st.markdown(reply)
+        return
+
+    words = reply.split()
+    if not words:
+        st.markdown(reply)
+        return
+
+    preview_words = min(len(words), ASSISTANT_TYPING_MAX_WORDS)
+    placeholder = st.empty()
+    current: list[str] = []
+
+    for word in words[:preview_words]:
+        if not _is_chat_active():
+            break
+        current.append(word)
+        placeholder.markdown(" ".join(current) + " ▌")
+        time.sleep(ASSISTANT_TYPING_WORD_DELAY_SECONDS)
+
+    placeholder.markdown(reply)
 
 st.set_page_config(
     page_title="DocuMind AI",
@@ -516,6 +637,113 @@ def format_error_message(response: requests.Response) -> str:
     return f"❌ **Error {response.status_code}:** {detail}"
 
 
+def create_upload_job(uploaded_file) -> tuple[str | None, str | None]:
+    try:
+        resp = requests.post(
+            f"{API_BASE_URL}/upload/jobs",
+            files={"file": (uploaded_file.name, uploaded_file.getvalue(), "application/pdf")},
+            timeout=120,
+        )
+    except requests.exceptions.ConnectionError:
+        return None, f"❌ **Connection Error:** Could not connect to the backend at {API_BASE_URL}."
+    except requests.exceptions.Timeout:
+        return None, "⏱️ **Timeout:** Upload request took too long. Please try again."
+
+    if resp.status_code != 200:
+        return None, format_error_message(resp)
+
+    try:
+        payload = resp.json()
+    except Exception:
+        return None, f"❌ **Error {resp.status_code}:** {resp.text}"
+
+    job_id = payload.get("job_id")
+    if not job_id:
+        return None, "❌ **Error:** Missing upload job id from backend response."
+    return str(job_id), None
+
+
+def fetch_upload_job(job_id: str) -> tuple[dict | None, str | None]:
+    try:
+        resp = requests.get(f"{API_BASE_URL}/upload/jobs/{job_id}", timeout=15)
+    except requests.exceptions.ConnectionError:
+        return None, f"❌ **Connection Error:** Could not connect to the backend at {API_BASE_URL}."
+    except requests.exceptions.Timeout:
+        return None, "⏱️ **Timeout:** Checking upload job took too long."
+
+    if resp.status_code != 200:
+        return None, format_error_message(resp)
+
+    try:
+        return resp.json(), None
+    except Exception:
+        return None, f"❌ **Error {resp.status_code}:** {resp.text}"
+
+
+def _render_upload_job_status(
+    status_slot,
+    status: str,
+    filename: str,
+    elapsed_seconds: float,
+    eta_seconds: int | None,
+) -> None:
+    if status_slot is None:
+        return
+
+    label = f"**{filename}**" if filename else "**Document**"
+    eta_suffix = ""
+    if eta_seconds is not None:
+        eta_suffix = " (ETA now)" if eta_seconds == 0 else f" (ETA ~{eta_seconds}s)"
+
+    if status == "pending":
+        status_slot.info(f"{label} queued for indexing... ({elapsed_seconds:.0f}s){eta_suffix}")
+        return
+    if status == "running":
+        status_slot.info(f"{label} is being indexed... ({elapsed_seconds:.0f}s){eta_suffix}")
+        return
+    if status == "succeeded":
+        status_slot.success(f"{label} indexing completed.")
+        return
+    if status == "failed":
+        status_slot.error(f"{label} indexing failed.")
+        return
+
+    status_slot.info(f"{label} status: {status}")
+
+
+def wait_for_upload_job(job_id: str, *, status_slot=None, filename: str = "") -> tuple[bool, str]:
+    started = time.monotonic()
+    while True:
+        elapsed = time.monotonic() - started
+        eta_seconds = _estimate_upload_eta_seconds(elapsed)
+        job, err = fetch_upload_job(job_id)
+        if err:
+            if status_slot is not None:
+                status_slot.error(err)
+            return False, err
+
+        status = (job or {}).get("status")
+        _render_upload_job_status(status_slot, str(status), filename, elapsed, eta_seconds)
+
+        if status == "succeeded":
+            _record_upload_duration(elapsed)
+            result = (job or {}).get("result") or {}
+            done_filename = result.get("filename") or filename or "file"
+            return True, f"✅ {done_filename} indexed successfully!"
+
+        if status == "failed":
+            error_msg = (job or {}).get("error") or "Unknown error"
+            return False, f"❌ **Indexing failed:** {error_msg}"
+
+        if time.monotonic() - started > UPLOAD_JOB_WAIT_SECONDS:
+            return False, (
+                "⏱️ Indexing is still running in the background. "
+                "Please wait a moment, then click Refresh Data or reopen this page."
+            )
+
+        time.sleep(UPLOAD_JOB_POLL_INTERVAL_SECONDS)
+
+
 def create_query_job(question: str, history: list[str]) -> tuple[str | None, str | None]:
     try:
         resp = requests.post(
@@ -629,16 +857,8 @@ def maybe_resume_pending_job():
         return
 
     with st.chat_message("assistant"):
-        st.write_stream(stream_text(reply))
+        _render_assistant_message(reply)
     st.session_state.messages.append({"role": "assistant", "content": reply})
-
-
-def stream_text(text: str):
-    for word in text.split(" "):
-        if not _is_chat_active():
-            return
-        yield word + " "
-        time.sleep(0.02)
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -666,26 +886,28 @@ with st.sidebar:
 
     uploaded_file = st.file_uploader("", type=["pdf"], label_visibility="collapsed")
     if uploaded_file:
+        upload_status_slot = st.empty()
         if st.button("⚡ Index Document", type="primary", use_container_width=True):
             with st.spinner("Indexing document..."):
-                try:
-                    resp = requests.post(
-                        f"{API_BASE_URL}/upload",
-                        files={"file": (uploaded_file.name, uploaded_file.getvalue(), "application/pdf")},
-                        timeout=120,
+                job_id, err = create_upload_job(uploaded_file)
+                if err or not job_id:
+                    st.error(err or "❌ **Error:** Failed to create upload job.")
+                else:
+                    upload_status_slot.info(f"**{uploaded_file.name}** uploaded. Starting indexing job...")
+                    ok, message = wait_for_upload_job(
+                        job_id,
+                        status_slot=upload_status_slot,
+                        filename=uploaded_file.name,
                     )
-                    if resp.status_code == 200:
-                        st.success(f"✅ {uploaded_file.name} indexed successfully!")
+                    if ok:
+                        st.success(message)
                         _fetch_indexed_documents.clear()
                         st.rerun()
                     else:
-                        st.error(format_error_message(resp))
-                except requests.exceptions.ConnectionError:
-                    st.error("❌ Could not connect to the backend.")
-                except requests.exceptions.Timeout:
-                    st.error("⏱️ Upload timed out. Please try again.")
-                except requests.exceptions.RequestException as exc:
-                    st.error(f"❌ Upload failed: {exc}")
+                        if "still running in the background" in message:
+                            st.info(message)
+                        else:
+                            st.error(message)
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
@@ -787,7 +1009,7 @@ if prompt := st.chat_input("Ask something about your documents..."):
         if err or not job_id:
             reply = err or "❌ **Error:** Failed to create job."
             with st.chat_message("assistant"):
-                st.write_stream(stream_text(reply))
+                _render_assistant_message(reply)
             st.session_state.messages.append({"role": "assistant", "content": reply})
         else:
             st.session_state["pending_job_id"] = job_id
