@@ -20,14 +20,14 @@
 ![HuggingFace%20Spaces](https://img.shields.io/badge/Hugging%20Face-Spaces-FFD21E?logo=huggingface)
 ![GitHub%20Actions](https://img.shields.io/badge/GitHub%20Actions-Automation-2088FF?logo=githubactions)
 
-**DocuMind** is an MVP-ready document question-answering system built with **FastAPI** (backend) and **Streamlit** (frontend). It runs a **RAG pipeline** (query rewriting → retrieval → reranking → answer generation) backed by **Qdrant**.
+**DocuMind** is an MVP-ready document question-answering system built with **FastAPI** (backend) and **Streamlit** (frontend). It runs a **hybrid RAG pipeline** (query rewriting → dense+lexical retrieval → fusion → reranking → answer generation) backed by **Qdrant**.
 
 ---
 
 ## 🌟 Features
 
 - **📄 PDF indexing**: Upload and index multiple PDF documents
-- **🔍 RAG pipeline**: Query rewriting + hybrid-ready retrieval (dense + lexical) + reranking
+- **🔍 RAG pipeline**: Query rewriting + hybrid retrieval (dense + lexical) + reranking
 - **⚡ Vector search**: Qdrant vector store (local or server/cloud)
 - **📊 Analytics**: Local metrics file + a Streamlit dashboard page
 - **🔐 Config via env**: `.env` / `.env.example` for secrets and runtime flags
@@ -87,7 +87,6 @@ Current retrieval mode:
 - Default mode: hybrid retrieval (dense + lexical BM25) fused via weighted RRF
 - Dense-only mode is available as fallback via `DOCUMIND_ENABLE_HYBRID_SEARCH=0`
 - Final-stage CrossEncoder reranking for context selection
-- Best-practice default: keep `DOCUMIND_ENABLE_HYBRID_SEARCH=1`
 
 ### Cloud runtime architecture (recommended for Azure)
 
@@ -116,11 +115,11 @@ This model is cost-efficient for Azure Student when using Container Apps Consump
 ## 🛠️ Tech Stack
 
 | Layer | Tech |
-|------:|------|
+|-------|------|
 | Backend API | FastAPI + Uvicorn |
 | Frontend UI | Streamlit |
 | Vector DB | Qdrant (local or server/cloud) |
-| RAG | LangChain + langchain-qdrant |
+| RAG | LangChain + langchain-qdrant + BM25 (rank-bm25) + RRF fusion |
 | LLM | Google Gemini (via `langchain-google-genai`) |
 | Embeddings | Sentence Transformers |
 | Reranker | CrossEncoder (sentence-transformers) |
@@ -477,7 +476,7 @@ If scale-to-zero startup latency is not acceptable:
 ## 📁 Project Structure
 
 ```
-documind-test/
+documind/
 ├── app/                     # FastAPI backend + RAG pipeline
 ├── frontend/                # Streamlit UI + dashboard page
 ├── tests/                   # Unit tests
