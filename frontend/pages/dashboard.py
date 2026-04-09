@@ -190,48 +190,6 @@ def _color_for(val: float) -> str:
     return COLORS["error"]
 
 
-def _coerce_metric(value: float | None) -> float:
-    if value is None:
-        return 0.0
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    if not math.isfinite(numeric):
-        return 0.0
-    return max(0.0, min(1.0, numeric))
-
-
-def _make_gauge(value: float, title: str, key: str) -> go.Figure:
-    safe_value = _coerce_metric(value)
-    color = _color_for(value)
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=round(safe_value * 100, 1),
-        number=dict(suffix="%", font=dict(size=26, color=color)),
-        title=dict(text=title, font=dict(size=13, color=COLORS["text_secondary"])),
-        gauge=dict(
-            axis=dict(range=[0, 100], tickcolor=COLORS["text_muted"],
-                      tickfont=dict(size=10, color=COLORS["text_muted"])),
-            bar=dict(color=color, thickness=0.25),
-            bgcolor=COLORS["bg_secondary"],
-            bordercolor=COLORS["border"],
-            steps=[
-                dict(range=[0, 50],   color="rgba(255, 107, 107, 0.13)"),
-                dict(range=[50, 75],  color="rgba(255, 179, 71, 0.13)"),
-                dict(range=[75, 100], color="rgba(0, 201, 167, 0.13)"),
-            ],
-            threshold=dict(line=dict(color=color, width=3), thickness=0.75, value=safe_value * 100),
-        ),
-    ))
-    fig.update_layout(
-        **_layout_kwargs(drop=("margin",)),
-        height=200,
-        margin=dict(l=12, r=12, t=40, b=12),
-    )
-    return fig
-
-
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("""
@@ -278,6 +236,12 @@ per_q   = per_query_ir_metrics(history, k=k_val, threshold=threshold)
 
 evaluated = ir_agg["evaluated_queries"]
 total_q   = raw.get("total_queries", 0)
+total_docs_indexed = raw.get("total_documents_indexed", 0)
+
+avg_resp = (raw.get("total_response_time", 0) / total_q) if total_q else 0
+avg_ret  = (raw.get("total_retrieval_time", 0) / total_q) if total_q else 0
+avg_gen  = (raw.get("total_generation_time", 0) / total_q) if total_q else 0
+avg_docs = (raw.get("total_docs_retrieved", 0) / total_q) if total_q else 0
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.markdown(f"""
@@ -307,44 +271,29 @@ if evaluated == 0:
         "Try asking a question on the Chat page."
     )
 
-# ── KPI Cards ─────────────────────────────────────────────────────────────────
-st.markdown('<div class="section-title">📌 IR Metrics Summary</div>', unsafe_allow_html=True)
+# ── Core KPI cards (lean default view) ───────────────────────────────────────
+st.markdown('<div class="section-title">📌 Core Quality & Performance</div>', unsafe_allow_html=True)
 
-metric_defs = [
-    ("Precision@k",  ir_agg["precision"],  "Fraction of top-k retrieved docs that are relevant"),
-    ("Recall@k",     ir_agg["recall"],     "Fraction of relevant docs found within top-k"),
-    ("MRR",          ir_agg["mrr"],        "Mean Reciprocal Rank — rank of first relevant doc"),
-    ("nDCG@k",       ir_agg["ndcg"],       "Normalized Discounted Cumulative Gain — ranking quality"),
-    ("HitRate@k",    ir_agg["hit_rate"],   "Queries with ≥1 relevant doc in top-k"),
+core_metrics = [
+    ("HitRate@k", _fmt(ir_agg["hit_rate"]), _color_for(ir_agg["hit_rate"]) if evaluated > 0 else COLORS["text_muted"],
+     "Queries with ≥1 relevant result"),
+    ("nDCG@k", _fmt(ir_agg["ndcg"]), _color_for(ir_agg["ndcg"]) if evaluated > 0 else COLORS["text_muted"],
+     "Ranking quality of top-k results"),
+    ("Avg Response", f"{avg_resp:.2f}s", COLORS["accent"], "End-to-end response latency"),
+    ("Avg Retrieval", f"{avg_ret:.2f}s", COLORS["accent"], "Retriever latency"),
+    ("Indexed Docs", str(total_docs_indexed), COLORS["accent"], "Total PDFs indexed so far"),
 ]
 
-cols = st.columns(5)
-for col, (label, val, desc) in zip(cols, metric_defs):
-    color = _color_for(val) if evaluated > 0 else COLORS["text_muted"]
+core_cols = st.columns(5)
+for col, (label, value, color, desc) in zip(core_cols, core_metrics):
     with col:
         st.markdown(f"""
         <div class="kpi-card">
-            <div class="kpi-value" style="color:{color};">{_fmt(val)}</div>
+            <div class="kpi-value" style="color:{color};">{value}</div>
             <div class="kpi-label">{label}</div>
-            <div class="kpi-sub">{desc[:40]}…</div>
+            <div class="kpi-sub">{desc}</div>
         </div>
         """, unsafe_allow_html=True)
-
-# ── Gauge row ─────────────────────────────────────────────────────────────────
-if evaluated > 0:
-    st.markdown('<div class="section-title">🎯 Gauge Charts</div>', unsafe_allow_html=True)
-    g_cols = st.columns(5)
-    gauge_data = [
-        ("Precision@k",  ir_agg["precision"]),
-        ("Recall@k",     ir_agg["recall"]),
-        ("MRR",          ir_agg["mrr"]),
-        ("nDCG@k",       ir_agg["ndcg"]),
-        ("HitRate@k",    ir_agg["hit_rate"]),
-    ]
-    for col, (label, val) in zip(g_cols, gauge_data):
-        with col:
-            st.plotly_chart(_make_gauge(val, label, label), use_container_width=True,
-                            config={"displayModeBar": False})
 
 # ── Trend chart ───────────────────────────────────────────────────────────────
 if per_q:
@@ -358,9 +307,6 @@ if per_q:
     if not df_scored.empty:
         fig_trend = go.Figure()
         metric_series = [
-            ("Precision@k",  "precision",  COLORS["chart1"]),
-            ("Recall@k",     "recall",     COLORS["chart2"]),
-            ("MRR",          "mrr",        COLORS["chart3"]),
             ("nDCG@k",       "ndcg",       COLORS["chart4"]),
             ("HitRate@k",    "hit_rate",   COLORS["chart5"]),
         ]
@@ -451,46 +397,8 @@ if per_q:
     )
     st.plotly_chart(fig_time, use_container_width=True, config={"displayModeBar": False})
 
-# ── Metrics definition cards ──────────────────────────────────────────────────
-st.markdown('<div class="section-title">📚 Metric Definitions</div>', unsafe_allow_html=True)
-
-definitions = [
-    ("Precision@k", COLORS["chart1"],
-     "Of the top-k retrieved docs, how many are truly relevant?",
-     r"$$\text{P@k} = \frac{|\{rel\} \cap \text{top-k}|}{k}$$"),
-    ("Recall@k", COLORS["chart2"],
-     "Of all relevant docs, how many were found within top-k?",
-     r"$$\text{R@k} = \frac{|\{rel\} \cap \text{top-k}|}{|\{rel\}|}$$"),
-    ("MRR", COLORS["chart3"],
-     "How highly ranked is the first relevant document? Higher is better.",
-     r"$$\text{MRR} = \frac{1}{|Q|}\sum_{i=1}^{|Q|} \frac{1}{\text{rank}_i}$$"),
-    ("nDCG@k", COLORS["chart4"],
-     "Ranking quality with graded relevance and position discounting.",
-     r"$$\text{nDCG@k} = \frac{\text{DCG@k}}{\text{IDCG@k}}$$"),
-    ("HitRate@k", COLORS["chart5"],
-     "Percentage of queries that have at least one relevant doc in top-k.",
-     r"$$\text{HR@k} = \frac{|\{q : \text{hit}_q = 1\}|}{|Q|}$$"),
-]
-
-def_cols = st.columns(5)
-for col, (title, color, desc, formula) in zip(def_cols, definitions):
-    with col:
-        st.markdown(f"""
-        <div class="kpi-card" style="text-align:left; min-height:160px;">
-            <div style="font-size:13px; font-weight:600; color:{color}; margin-bottom:8px;">{title}</div>
-            <div style="font-size:12px; color:{COLORS['text_secondary']}; line-height:1.5;">{desc}</div>
-        </div>
-        """, unsafe_allow_html=True)
-        st.markdown(formula)
-
-
 # ── Aggregate stats ───────────────────────────────────────────────────────────
 st.markdown('<div class="section-title">📊 Aggregate Statistics</div>', unsafe_allow_html=True)
-
-avg_resp = (raw.get("total_response_time", 0) / total_q) if total_q else 0
-avg_ret  = (raw.get("total_retrieval_time", 0) / total_q) if total_q else 0
-avg_gen  = (raw.get("total_generation_time", 0) / total_q) if total_q else 0
-avg_docs = (raw.get("total_docs_retrieved", 0) / total_q) if total_q else 0
 
 agg_cols = st.columns(4)
 agg_stats = [
@@ -510,7 +418,7 @@ for col, (label, val, sub) in zip(agg_cols, agg_stats):
         """, unsafe_allow_html=True)
 
 # ── Per-query table ───────────────────────────────────────────────────────────
-st.markdown('<div class="section-title">🗂️ Detailed Query History</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">🗂️ Query History (Core)</div>', unsafe_allow_html=True)
 
 if per_q:
     df_table = pd.DataFrame(per_q)
@@ -521,17 +429,14 @@ if per_q:
         "response_time":   "Resp (s)",
         "retrieval_time":  "Retr (s)",
         "docs_retrieved":  "Docs",
-        "precision":       f"P@{k_val}",
-        "recall":          f"R@{k_val}",
-        "mrr":             "MRR",
         "ndcg":            f"nDCG@{k_val}",
         "hit_rate":        f"HR@{k_val}",
     }
     df_display = df_table[list(display_cols.keys())].copy()
     df_display.columns = list(display_cols.values())
 
-    # Format float columns
-    for col in [f"P@{k_val}", f"R@{k_val}", "MRR", f"nDCG@{k_val}", f"HR@{k_val}"]:
+    # Format score columns
+    for col in [f"nDCG@{k_val}", f"HR@{k_val}"]:
         df_display[col] = df_display[col].apply(
             lambda x: f"{x:.4f}" if pd.notna(x) else "—"
         )
@@ -539,4 +444,65 @@ if per_q:
     st.dataframe(df_display, use_container_width=True, hide_index=True, height=320)
 else:
     st.info("No query history yet.")
-    st.info("Belum ada riwayat query.")
+
+
+# ── Advanced retrieval metrics (optional) ────────────────────────────────────
+with st.expander("Advanced Retrieval Metrics (optional)", expanded=False):
+    st.markdown(
+        f"""
+        <div style="font-size:12px; color:{COLORS['text_secondary']}; margin-bottom:12px;">
+            Advanced metrics use score-threshold relevance (threshold = {threshold:.2f})
+            and are best used for retrieval debugging.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    adv_metric_defs = [
+        ("Precision@k", ir_agg["precision"], "Fraction of top-k docs that are relevant"),
+        ("Recall@k", ir_agg["recall"], "Fraction of relevant docs found in top-k"),
+        ("MRR", ir_agg["mrr"], "How early the first relevant doc appears"),
+        ("Avg Generation", avg_gen, "Average answer-generation latency (s)"),
+    ]
+
+    adv_cols = st.columns(4)
+    for col, (label, val, desc) in zip(adv_cols, adv_metric_defs):
+        if label == "Avg Generation":
+            display_value = f"{val:.2f}s"
+            color = COLORS["accent"]
+        else:
+            display_value = _fmt(val)
+            color = _color_for(val) if evaluated > 0 else COLORS["text_muted"]
+
+        with col:
+            st.markdown(f"""
+            <div class="kpi-card">
+                <div class="kpi-value" style="color:{color};">{display_value}</div>
+                <div class="kpi-label">{label}</div>
+                <div class="kpi-sub">{desc}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.markdown('<div class="section-title">📚 Metric Definitions</div>', unsafe_allow_html=True)
+    definitions = [
+        ("Precision@k", COLORS["chart1"],
+         "Of the top-k retrieved docs, how many are truly relevant?",
+         r"$$\text{P@k} = \frac{|\{rel\} \cap \text{top-k}|}{k}$$"),
+        ("Recall@k", COLORS["chart2"],
+         "Of all relevant docs, how many were found within top-k?",
+         r"$$\text{R@k} = \frac{|\{rel\} \cap \text{top-k}|}{|\{rel\}|}$$"),
+        ("MRR", COLORS["chart3"],
+         "How highly ranked is the first relevant document? Higher is better.",
+         r"$$\text{MRR} = \frac{1}{|Q|}\sum_{i=1}^{|Q|} \frac{1}{\text{rank}_i}$$"),
+    ]
+
+    def_cols = st.columns(3)
+    for col, (title, color, desc, formula) in zip(def_cols, definitions):
+        with col:
+            st.markdown(f"""
+            <div class="kpi-card" style="text-align:left; min-height:160px;">
+                <div style="font-size:13px; font-weight:600; color:{color}; margin-bottom:8px;">{title}</div>
+                <div style="font-size:12px; color:{COLORS['text_secondary']}; line-height:1.5;">{desc}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            st.markdown(formula)
