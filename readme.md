@@ -119,10 +119,10 @@ This model is cost-efficient for Azure Student when using Container Apps Consump
 | Backend API | FastAPI + Uvicorn |
 | Frontend UI | Streamlit |
 | Vector DB | Qdrant (local or server/cloud) |
-| RAG | LangChain + langchain-qdrant + BM25 (rank-bm25) + RRF fusion |
+| RAG | LangChain + `langchain-qdrant` + BM25 (`rank-bm25`) + RRF fusion |
 | LLM | Google Gemini (via `langchain-google-genai`) |
 | Embeddings | Sentence Transformers |
-| Reranker | CrossEncoder (sentence-transformers) |
+| Reranker | CrossEncoder (`sentence-transformers`) |
 | Testing | pytest |
 | CI | GitHub Actions |
 | CD / Deployment | Hugging Face Spaces (Docker), Azure Container Apps |
