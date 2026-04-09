@@ -10,6 +10,13 @@ from app.config import (
     CHUNK_OVERLAP,
     RETRIEVAL_K,
     RERANK_TOP_K,
+    USE_HYBRID_SEARCH,
+    HYBRID_LEXICAL_K,
+    HYBRID_FUSION_LIMIT,
+    HYBRID_MAX_LEXICAL_DOCS,
+    HYBRID_RRF_K,
+    HYBRID_DENSE_WEIGHT,
+    HYBRID_LEXICAL_WEIGHT,
     LLM_MODEL,
     EMBEDDING_MODEL
 )
@@ -45,6 +52,24 @@ def test_retrieval_parameters():
     assert RETRIEVAL_K > 0
     assert RERANK_TOP_K > 0
     assert RERANK_TOP_K <= RETRIEVAL_K, "Rerank top k should be <= retrieval k"
+
+
+def test_hybrid_retrieval_parameters():
+    """Hybrid retrieval settings are well-formed."""
+    assert isinstance(USE_HYBRID_SEARCH, bool)
+    assert isinstance(HYBRID_LEXICAL_K, int)
+    assert isinstance(HYBRID_FUSION_LIMIT, int)
+    assert isinstance(HYBRID_MAX_LEXICAL_DOCS, int)
+    assert isinstance(HYBRID_RRF_K, int)
+    assert isinstance(HYBRID_DENSE_WEIGHT, float)
+    assert isinstance(HYBRID_LEXICAL_WEIGHT, float)
+
+    assert HYBRID_LEXICAL_K > 0
+    assert HYBRID_FUSION_LIMIT > 0
+    assert HYBRID_MAX_LEXICAL_DOCS >= 100
+    assert HYBRID_RRF_K > 0
+    assert HYBRID_DENSE_WEIGHT >= 0
+    assert HYBRID_LEXICAL_WEIGHT >= 0
 
 
 def test_model_names():

@@ -2,7 +2,7 @@
 
 The end-to-end flow is:
 
-rewrite query → retrieve → rerank → generate answer → return metrics.
+rewrite query → retrieve (dense or hybrid) → rerank → generate answer → return metrics.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from .config import GEMINI_API_KEY, LLM_MODEL, RETRIEVAL_K
 from .reranker import rerank
-from .retriever import build_retriever
+from .retriever import build_retriever, retrieve_documents
 from .utils import format_docs
 
 
@@ -93,13 +93,17 @@ def rag_pipeline(question: str, history: Any) -> dict[str, Any]:
     """
 
     total_start = time.monotonic()
-    retriever, vectorstore, _ = build_retriever()
+    retriever, vectorstore, client = build_retriever()
 
     try:
         standalone_query = rewrite_query(question, history)
 
         retrieval_start = time.monotonic()
-        retrieved_docs = retriever.invoke(standalone_query)
+        retrieved_docs, retrieval_meta = retrieve_documents(
+            standalone_query,
+            dense_retriever=retriever,
+            client=client,
+        )
 
         reranked_docs = rerank(standalone_query, retrieved_docs)
         retrieval_time = time.monotonic() - retrieval_start
@@ -134,6 +138,10 @@ def rag_pipeline(question: str, history: Any) -> dict[str, Any]:
                 "docs_retrieved": len(retrieved_docs),
                 "chunks_processed": len(reranked_docs),
                 "retrieval_scores": retrieval_scores,
+                "retrieval_mode": retrieval_meta.get("mode", "dense"),
+                "dense_candidates": retrieval_meta.get("dense_docs", len(retrieved_docs)),
+                "lexical_candidates": retrieval_meta.get("lexical_docs", 0),
+                "fused_candidates": retrieval_meta.get("fused_docs", len(retrieved_docs)),
             },
         }
     finally:

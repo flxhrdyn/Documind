@@ -27,7 +27,7 @@
 ## 🌟 Features
 
 - **📄 PDF indexing**: Upload and index multiple PDF documents
-- **🔍 RAG pipeline**: Query rewriting + semantic retrieval + reranking
+- **🔍 RAG pipeline**: Query rewriting + hybrid-ready retrieval (dense + lexical) + reranking
 - **⚡ Vector search**: Qdrant vector store (local or server/cloud)
 - **📊 Analytics**: Local metrics file + a Streamlit dashboard page
 - **🔐 Config via env**: `.env` / `.env.example` for secrets and runtime flags
@@ -79,9 +79,41 @@ When you have a set of PDF documents, it’s tedious to manually search for answ
 Pipeline (high-level):
 
 1. Rewrite question into a standalone query (LLM)
-2. Retrieve relevant chunks from Qdrant (MultiQueryRetriever)
-3. Rerank top chunks (CrossEncoder)
-4. Generate answer constrained to retrieved context (LLM)
+2. Retrieve dense candidates from Qdrant (MultiQueryRetriever + MMR)
+3. Retrieve lexical candidates with BM25 keyword search
+4. Fuse dense + lexical ranks using weighted RRF
+5. Rerank top fused chunks (CrossEncoder)
+6. Generate answer using retrieved context and sources (LLM)
+7. Return answer, sources, and timing/retrieval metrics
+
+Current retrieval mode:
+
+- Default mode: hybrid retrieval (dense + lexical BM25) fused via weighted RRF
+- Dense-only mode is available as fallback via `DOCUMIND_ENABLE_HYBRID_SEARCH=0`
+- Final-stage CrossEncoder reranking for context selection
+- Best-practice default: keep `DOCUMIND_ENABLE_HYBRID_SEARCH=1`
+
+### Cloud runtime architecture (recommended for Azure)
+
+```
+┌───────────────────────┐
+│       End User        │
+└───────────┬───────────┘
+            │ HTTPS
+            ▼
+┌────────────────────────────────────────────┐
+│ Azure Container App (single service)       │
+│  - Streamlit UI :7860 (public ingress)     │
+│  - FastAPI API :8000 (internal loopback)   │
+└───────────┬───────────────────────┬────────┘
+            │                       │
+            ▼                       ▼
+┌───────────────────┐      ┌───────────────────┐
+│ Google Gemini API │      │ Qdrant Cloud/DB   │
+└───────────────────┘      └───────────────────┘
+```
+
+This model is cost-efficient for Azure Student when using Container Apps Consumption with `min-replicas=0`.
 
 ---
 
@@ -98,7 +130,22 @@ Pipeline (high-level):
 | Reranker | CrossEncoder (sentence-transformers) |
 | Testing | pytest |
 | CI | GitHub Actions |
-| CD / Deployment | Hugging Face Spaces (Docker) |
+| CD / Deployment | Hugging Face Spaces (Docker), Azure Container Apps |
+
+---
+
+## 🔁 Delivery Pipeline (CI/CD)
+
+Current delivery paths:
+
+1. CI (GitHub Actions): run test and quality checks on pull request/push
+2. CD path A (already in repo): sync and deploy full Docker app to Hugging Face Spaces
+3. CD path B (documented in this README): build image and deploy to Azure Container Apps
+
+Reference workflow currently in repo:
+
+- `.github/workflows/ci.yml`
+- `.github/workflows/sync-to-hf-space.yml`
 
 ---
 
@@ -184,6 +231,17 @@ QDRANT_PREFER_GRPC=0
 
 # Optional: Streamlit -> backend URL
 DOCUMIND_API_BASE_URL=http://localhost:8000
+
+# Hybrid retrieval mode (default on, set 0 to force dense-only)
+DOCUMIND_ENABLE_HYBRID_SEARCH=1
+
+# Optional: hybrid retrieval tuning
+DOCUMIND_HYBRID_LEXICAL_K=10
+DOCUMIND_HYBRID_FUSION_LIMIT=20
+DOCUMIND_HYBRID_MAX_LEXICAL_DOCS=3000
+DOCUMIND_HYBRID_RRF_K=60
+DOCUMIND_HYBRID_DENSE_WEIGHT=1.0
+DOCUMIND_HYBRID_LEXICAL_WEIGHT=1.0
 
 # Optional: delete PDFs after indexing
 DOCUMIND_DELETE_UPLOADED_PDFS=0
@@ -300,6 +358,126 @@ When adding values in Hugging Face Spaces:
 
 ---
 
+## ☁️ Cloud Implementation Guide (for this project)
+
+This repo is already cloud-friendly because it ships an **all-in-one container**:
+
+- Streamlit UI is exposed on port `7860`
+- FastAPI runs internally on `127.0.0.1:8000`
+- `start.sh` starts both processes in one container
+
+For MVP and student budget, this is the cheapest operational model because you only deploy **one service**.
+
+### Recommended architecture (MVP)
+
+1. Deploy one container from `Dockerfile`
+2. Use external Qdrant (Qdrant Cloud or managed Qdrant server)
+3. Keep PDFs ephemeral in app disk (optional delete after indexing)
+
+Why external Qdrant?
+
+- Local Qdrant path (`qdrant_storage/`) is tied to container filesystem
+- Cloud containers may restart/redeploy and lose local state
+- External Qdrant gives better durability and scaling
+
+### Azure Student: cheapest practical path
+
+Use **Azure Container Apps (Consumption)** with scale-to-zero:
+
+- `min-replicas=0` to avoid paying while idle
+- Start with `0.5 vCPU / 1 GiB` and max replicas `1`
+- Keep region single (for example `southeastasia`) to reduce complexity
+- Store secrets in Container Apps secrets, not in image
+
+### Step-by-step: Deploy to Azure Container Apps
+
+Prerequisites:
+
+- Azure account/subscription (Azure for Students is fine)
+- Azure CLI installed
+- Qdrant URL and API key (if using Qdrant Cloud)
+
+```bash
+# 1) Login and enable Container Apps extension
+az login
+az extension add --name containerapp --upgrade
+
+# 2) Create resource group
+az group create --name rg-documind --location southeastasia
+
+# 3) Create Container Apps environment
+az containerapp env create \
+       --name cae-documind \
+       --resource-group rg-documind \
+       --location southeastasia
+
+# 4) Create ACR (replace with globally-unique name)
+az acr create --name <yourAcrName> --resource-group rg-documind --sku Basic
+
+# 5) Build and push image from repo root
+az acr build --registry <yourAcrName> --image documind:latest --resource-group rg-documind .
+
+# 6) Build image URL
+IMAGE=$(az acr show --name <yourAcrName> --resource-group rg-documind --query loginServer -o tsv)/documind:latest
+
+# 7) Create app (replace secret values)
+az containerapp create \
+       --name documind-app \
+       --resource-group rg-documind \
+       --environment cae-documind \
+       --image $IMAGE \
+       --ingress external \
+       --target-port 7860 \
+       --cpu 0.5 \
+       --memory 1.0Gi \
+       --min-replicas 0 \
+       --max-replicas 1 \
+       --secrets gemini-api-key=<GEMINI_API_KEY> qdrant-api-key=<QDRANT_API_KEY> \
+       --env-vars \
+              PORT=7860 \
+              DOCUMIND_API_BASE_URL=http://127.0.0.1:8000 \
+              QDRANT_URL=<QDRANT_URL> \
+              QDRANT_PREFER_GRPC=0 \
+              DOCUMIND_DELETE_UPLOADED_PDFS=1 \
+              DOCUMIND_UPLOAD_TIMEOUT_SECONDS=600 \
+              GEMINI_API_KEY=secretref:gemini-api-key \
+              QDRANT_API_KEY=secretref:qdrant-api-key
+
+# 8) Get public URL
+az containerapp show --name documind-app --resource-group rg-documind --query properties.configuration.ingress.fqdn -o tsv
+```
+
+### Required environment variables in cloud
+
+- `GEMINI_API_KEY` (required)
+- `QDRANT_URL` (recommended for durable vector data)
+- `QDRANT_API_KEY` (if Qdrant is secured)
+
+### Recommended optional environment variables
+
+- `DOCUMIND_DELETE_UPLOADED_PDFS=1`
+- `DOCUMIND_UPLOAD_TIMEOUT_SECONDS=600`
+- `QDRANT_PREFER_GRPC=0`
+- `DOCUMIND_ENABLE_HYBRID_SEARCH=0` only if you need dense-only mode
+- `DOCUMIND_HYBRID_RRF_K`, `DOCUMIND_HYBRID_DENSE_WEIGHT`, `DOCUMIND_HYBRID_LEXICAL_WEIGHT` for fusion tuning
+- `STREAMLIT_ENABLE_CORS` and `STREAMLIT_ENABLE_XSRF_PROTECTION` only if your proxy path requires override
+
+### If you want no cold start
+
+If scale-to-zero startup latency is not acceptable:
+
+- Set `min-replicas=1` in Container Apps (higher cost)
+- Or use App Service B1 for always-on behavior (predictable monthly cost)
+
+### Cost controls (highly recommended)
+
+1. Create Azure budget alerts early (for example: 5 USD, 15 USD, 30 USD)
+2. Keep one environment only (avoid dev/staging/prod duplication initially)
+3. Avoid VM-based deployment for this MVP
+4. Review usage weekly and tune CPU/memory if average load is low
+
+---
+
 ## 📁 Project Structure
 
 ```
@@ -324,4 +502,26 @@ documind-test/
 
 - `/query/jobs` state is stored in memory (lost on restart)
 - Dashboard metrics are stored in a local `metrics.json` file (not shared across instances)
-- No authentication / rate limiting built-in
+- No authentication / authorization / rate limiting built-in
+- Cloud scale-to-zero can introduce cold-start latency on first request
+- Local Qdrant path is not durable for production unless external storage/service is used
+
+---
+
+## 🚀 Future Works
+
+1. Add persistent job store (for `/query/jobs`) using Redis or database backend
+2. Move metrics to managed storage (for multi-instance dashboard consistency)
+3. Add authentication, role-based access, and API rate limiting
+4. Support background indexing queue for large PDF batches
+5. Add native sparse-vector hybrid in Qdrant and compare vs BM25 branch
+6. Add CI pipeline for Azure deployment (build, push, and rollout)
+7. Improve observability with structured logs, traces, and cost dashboards
+
+---
+
+## 👤 Author
+
+Felix Hardyan
+
+HuggingFace: felixhrdyn

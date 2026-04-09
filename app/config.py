@@ -16,6 +16,32 @@ load_dotenv(override=False)
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def _env_bool(name: str, default: str = "0") -> bool:
+    return (os.getenv(name, default) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int, *, min_value: int) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return max(default, min_value)
+    try:
+        value = int(raw)
+    except ValueError:
+        return max(default, min_value)
+    return max(value, min_value)
+
+
+def _env_float(name: str, default: float, *, min_value: float) -> float:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return max(default, min_value)
+    try:
+        value = float(raw)
+    except ValueError:
+        return max(default, min_value)
+    return max(value, min_value)
+
+
 def _configure_huggingface_hub_defaults() -> None:
     """Set safe HF Hub defaults (timeouts, offline mode, telemetry).
 
@@ -64,6 +90,17 @@ CHUNK_OVERLAP = 100
 
 # Retrieval
 RETRIEVAL_K = 10
+
+# Hybrid retrieval (dense + lexical) settings.
+# Hybrid uses weighted reciprocal-rank fusion (RRF) before reranking and is
+# enabled by default. Set DOCUMIND_ENABLE_HYBRID_SEARCH=0 to force dense-only.
+USE_HYBRID_SEARCH = _env_bool("DOCUMIND_ENABLE_HYBRID_SEARCH", default="1")
+HYBRID_LEXICAL_K = _env_int("DOCUMIND_HYBRID_LEXICAL_K", default=10, min_value=1)
+HYBRID_FUSION_LIMIT = _env_int("DOCUMIND_HYBRID_FUSION_LIMIT", default=20, min_value=1)
+HYBRID_MAX_LEXICAL_DOCS = _env_int("DOCUMIND_HYBRID_MAX_LEXICAL_DOCS", default=3000, min_value=100)
+HYBRID_RRF_K = _env_int("DOCUMIND_HYBRID_RRF_K", default=60, min_value=1)
+HYBRID_DENSE_WEIGHT = _env_float("DOCUMIND_HYBRID_DENSE_WEIGHT", default=1.0, min_value=0.0)
+HYBRID_LEXICAL_WEIGHT = _env_float("DOCUMIND_HYBRID_LEXICAL_WEIGHT", default=1.0, min_value=0.0)
 
 # Reranking
 RERANK_TOP_K = 5
