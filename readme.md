@@ -36,11 +36,7 @@
 
 ## 🔗 Live Demo
 
-This repo does not ship public demo links by default. Local endpoints:
-
-- Frontend (Streamlit): `http://localhost:8501`
-- Backend (FastAPI): `http://localhost:8000`
-- API docs: `http://localhost:8000/docs`
+- Hugging Face Space: https://felixhrdyn-documind.hf.space
 
 For hosted deployments, this repo provides:
 
