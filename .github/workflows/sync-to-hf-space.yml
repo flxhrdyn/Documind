@@ -1,7 +1,9 @@
 name: "CD - Sync to Hugging Face Space"
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -15,12 +17,14 @@ env:
 jobs:
   sync-to-hf-space:
     name: Sync to HF Space
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Ensure git-lfs is installed
         shell: bash
@@ -76,7 +80,7 @@ jobs:
           git lfs track "*.onnx" "*.pt" "*.bin" "*.zip" "*.tar" "*.tar.gz" "*.npz" "*.pdf" || true
 
           git add -A
-          git commit -m "Sync from ${GITHUB_REPOSITORY}@${GITHUB_SHA}"
+          git commit -m "Sync from ${GITHUB_REPOSITORY}@${{ github.event.workflow_run.head_sha || github.sha }}"
 
           git branch -M "${BRANCH}"
           git remote add space "${SPACE_URL}"
