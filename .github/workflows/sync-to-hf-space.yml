@@ -1,0 +1,91 @@
+name: "CD - Sync to Hugging Face Space"
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: hf-space-sync
+  cancel-in-progress: true
+
+env:
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  sync-to-hf-space:
+    name: Sync to HF Space
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure git-lfs is installed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v git-lfs &>/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y git-lfs
+          fi
+          git lfs version
+
+      - name: Sync snapshot to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
+          HF_SPACE_BRANCH: ${{ secrets.HF_SPACE_BRANCH }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${HF_TOKEN:-}" ]]; then
+            echo "Missing secret: HF_TOKEN" >&2
+            exit 1
+          fi
+          if [[ -z "${HF_SPACE_ID:-}" ]]; then
+            echo "Missing secret: HF_SPACE_ID (example: username/space-name)" >&2
+            exit 1
+          fi
+
+          BRANCH="${HF_SPACE_BRANCH:-main}"
+          SPACE_URL="https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE_ID}.git"
+
+          # Create a clean snapshot directory with ONLY the files the Space needs.
+          TMP_REPO="/tmp/hf_space_repo"
+          rm -rf "${TMP_REPO}"
+          mkdir -p "${TMP_REPO}"
+
+          # Export a curated subset from the current commit.
+          git archive --format=tar HEAD \
+            app frontend requirements.txt \
+            huggingface/README.md huggingface/Dockerfile huggingface/start.sh \
+            | tar -x -C "${TMP_REPO}"
+
+          # Hugging Face Spaces expects these files at the repo root.
+          mv "${TMP_REPO}/huggingface/README.md" "${TMP_REPO}/README.md"
+          mv "${TMP_REPO}/huggingface/Dockerfile" "${TMP_REPO}/Dockerfile"
+          mv "${TMP_REPO}/huggingface/start.sh" "${TMP_REPO}/start.sh"
+          rm -rf "${TMP_REPO}/huggingface"
+
+          cd "${TMP_REPO}"
+          git init
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          git lfs install
+          git lfs track "*.onnx" "*.pt" "*.bin" "*.zip" "*.tar" "*.tar.gz" "*.npz" "*.pdf" || true
+
+          git add -A
+          git commit -m "Sync from ${GITHUB_REPOSITORY}@${GITHUB_SHA}"
+
+          git branch -M "${BRANCH}"
+          git remote add space "${SPACE_URL}"
+
+          echo "Pushing to Hugging Face Space (${HF_SPACE_ID}) on branch ${BRANCH}..."
+          if ! git push space "${BRANCH}"; then
+            echo "Normal push failed; attempting force push..."
+            git push --force space "${BRANCH}"
+          fi

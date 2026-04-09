@@ -1,0 +1,180 @@
+"""Indexing and document-management routes.
+
+Endpoints here cover PDF upload/indexing, listing indexed sources, and clearing
+the vector store.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import shutil
+import uuid
+
+from fastapi import APIRouter, File, HTTPException, UploadFile
+
+from .config import (
+    DELETE_UPLOADED_PDFS,
+    QDRANT_COLLECTION,
+    QDRANT_PATH,
+    QDRANT_URL,
+    UPLOAD_DIR,
+)
+from .index_data import index_documents
+from .qdrant_conn import close_qdrant_client, get_qdrant_client
+
+router = APIRouter()
+
+logger = logging.getLogger(__name__)
+
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+@router.post("/upload")
+def upload_pdf(file: UploadFile = File(...)):
+    """Upload a PDF and index it into Qdrant.
+
+    The file is written to `UPLOAD_DIR` first, then passed to the indexing
+    pipeline. If `DELETE_UPLOADED_PDFS=1`, the local file is removed after a
+    successful index.
+    """
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing filename")
+
+    safe_name = os.path.basename(file.filename)
+    if not safe_name.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only .pdf files are supported")
+
+    file_path = os.path.join(UPLOAD_DIR, safe_name)
+    if os.path.exists(file_path):
+        stem, ext = os.path.splitext(safe_name)
+        file_path = os.path.join(UPLOAD_DIR, f"{stem}_{uuid.uuid4().hex[:8]}{ext}")
+
+    with open(file_path, "wb") as f:
+        # Sync read to keep this endpoint as a normal (threadpooled) request.
+        f.write(file.file.read())
+
+    # Index into Qdrant.
+    try:
+        index_documents(file_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Indexing failed")
+        raise HTTPException(status_code=500, detail=f"Indexing failed: {type(exc).__name__}: {exc}")
+
+    # Optional: delete local PDF after indexing (useful for deployments where
+    # disk is ephemeral or not shared across instances).
+    if DELETE_UPLOADED_PDFS:
+        try:
+            os.remove(file_path)
+        except FileNotFoundError:
+            pass
+        except Exception:
+            # Best-effort cleanup; indexing already succeeded.
+            pass
+
+    return {"status": "PDF indexed successfully", "filename": os.path.basename(file_path)}
+
+
+@router.get("/documents")
+def list_documents():
+    """List indexed document names.
+
+    This derives the list from Qdrant payload metadata (document `source`) so
+    the UI can work even when uploaded PDFs are deleted after indexing.
+    """
+
+    client = get_qdrant_client()
+    try:
+        existing = [c.name for c in client.get_collections().collections]
+    except Exception as exc:
+        logger.exception("Failed to list Qdrant collections")
+        raise HTTPException(status_code=500, detail=f"Failed to query Qdrant: {type(exc).__name__}: {exc}")
+    if QDRANT_COLLECTION not in existing:
+        return {"documents": [], "count": 0}
+
+    documents: set[str] = set()
+
+    next_offset = None
+    max_points = 5000
+    seen_points = 0
+
+    while True:
+        try:
+            points, next_offset = client.scroll(
+                collection_name=QDRANT_COLLECTION,
+                limit=256,
+                with_payload=True,
+                with_vectors=False,
+                offset=next_offset,
+            )
+        except Exception as exc:
+            logger.exception("Failed to scroll Qdrant collection")
+            raise HTTPException(status_code=500, detail=f"Failed to query Qdrant: {type(exc).__name__}: {exc}")
+
+        if not points:
+            break
+
+        for p in points:
+            payload = getattr(p, "payload", None) or {}
+            if not isinstance(payload, dict):
+                continue
+
+            meta = payload.get("metadata")
+            source = None
+            if isinstance(meta, dict):
+                source = meta.get("source")
+            if not source:
+                source = payload.get("source")
+
+            if isinstance(source, str) and source:
+                documents.add(os.path.basename(source))
+
+        seen_points += len(points)
+        if next_offset is None:
+            break
+        if seen_points >= max_points:
+            break
+
+    return {"documents": sorted(documents), "count": len(documents)}
+
+
+@router.delete("/documents")
+def clear_documents():
+    """Delete all indexed documents.
+
+    - In Qdrant server/cloud mode: deletes the collection.
+    - In local mode: removes the on-disk storage directory.
+    """
+
+    if os.path.exists(UPLOAD_DIR):
+        for filename in os.listdir(UPLOAD_DIR):
+            file_path = os.path.join(UPLOAD_DIR, filename)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+
+    # Close any open client first to avoid Windows file lock issues.
+    close_qdrant_client()
+
+    try:
+        if QDRANT_URL:
+            # Server mode: delete collection instead of deleting local storage folder.
+            client = get_qdrant_client()
+            existing = [c.name for c in client.get_collections().collections]
+            if QDRANT_COLLECTION in existing:
+                client.delete_collection(collection_name=QDRANT_COLLECTION)
+            close_qdrant_client()
+        else:
+            # Local mode: remove the storage directory.
+            if os.path.exists(QDRANT_PATH):
+                shutil.rmtree(QDRANT_PATH)
+    except Exception as exc:
+        logger.exception("Failed to clear documents")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to clear vector store: {type(exc).__name__}: {exc}",
+        )
+
+    return {"status": "Documents and vector store cleared"}

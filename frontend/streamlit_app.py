@@ -1,0 +1,796 @@
+"""DocuMind Streamlit chat UI.
+
+This Streamlit app is a thin client for the FastAPI backend. Configure the
+backend URL with `DOCUMIND_API_BASE_URL` (defaults to `http://localhost:8000`).
+"""
+
+import os
+import sys
+import time
+
+import requests
+import streamlit as st
+
+# Add project root to the import path so `app.*` and `frontend.*` imports work
+# when running via `streamlit run`.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from app.config import UPLOAD_DIR
+from app.metrics import log_query
+from frontend.theme import COLORS
+
+API_BASE_URL = os.getenv("DOCUMIND_API_BASE_URL", "http://localhost:8000").rstrip("/")
+
+ACTIVE_PAGE_KEY = "documind_active_page"
+
+
+def _set_active_page(page: str) -> None:
+    st.session_state[ACTIVE_PAGE_KEY] = page
+
+
+def _is_chat_active() -> bool:
+    return st.session_state.get(ACTIVE_PAGE_KEY, "chat") == "chat"
+
+st.set_page_config(
+    page_title="DocuMind AI",
+    page_icon="🧠",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# Mark this page as active early so long-running UI updates can stop when the
+# user navigates to another page (e.g. Dashboard).
+_set_active_page("chat")
+
+
+# ── Design System ─────────────────────────────────────────────────────────────
+
+st.markdown(f"""
+<style>
+/* ── Google Font ── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* ── Global reset ── */
+html, body, [class*="css"] {{
+    font-family: 'Inter', sans-serif;
+    background-color: {COLORS['bg_primary']};
+    color: {COLORS['text_primary']};
+}}
+
+/* ── App background ── */
+.stApp {{
+    background-color: {COLORS['bg_primary']};
+}}
+
+/* ── Hide Streamlit default header/footer ── */
+#MainMenu, footer, header {{ visibility: hidden; }}
+
+/* ── Sidebar ── */
+[data-testid="stSidebar"] {{
+    background-color: {COLORS['bg_sidebar']};
+    border-right: 1px solid {COLORS['border']};
+}}
+[data-testid="stSidebar"] * {{
+    color: {COLORS['text_primary']};
+}}
+
+/* ── Sidebar header branding ── */
+.brand-header {{
+    padding: 16px 0;
+    border-bottom: 1px solid {COLORS['border']};
+    margin-bottom: 20px;
+}}
+.brand-title {{
+    font-size: 22px;
+    font-weight: 700;
+    color: {COLORS['text_primary']};
+    letter-spacing: -0.3px;
+}}
+.brand-title span {{
+    color: {COLORS['accent']};
+}}
+.brand-subtitle {{
+    font-size: 11px;
+    font-weight: 400;
+    color: {COLORS['text_muted']};
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    margin-top: 4px;
+}}
+
+/* ── Section labels ── */
+.section-label {{
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: {COLORS['text_muted']};
+    margin-bottom: 12px;
+    margin-top: 8px;
+}}
+
+/* ── Doc pill ── */
+.doc-pill {{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: {COLORS['bg_card']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    color: {COLORS['text_primary']};
+}}
+.doc-pill-icon {{
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    color: {COLORS['accent']};
+    flex-shrink: 0;
+}}
+.doc-pill-text {{
+    min-width: 0;
+    line-height: 1.45;
+    word-break: break-word;
+}}
+
+/* ── Empty state ── */
+.empty-state {{
+    text-align: center;
+    padding: 20px;
+    background: {COLORS['bg_card']};
+    border: 1px dashed {COLORS['border']};
+    border-radius: 10px;
+    color: {COLORS['text_muted']};
+    font-size: 13px;
+}}
+
+/* ── Metric cards ── */
+.metric-card {{
+    background: {COLORS['bg_card']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 10px;
+    padding: 16px;
+    text-align: center;
+    margin-bottom: 8px;
+}}
+.metric-value {{
+    font-size: 22px;
+    font-weight: 700;
+    color: {COLORS['accent']};
+    line-height: 1.2;
+}}
+.metric-label {{
+    font-size: 11px;
+    color: {COLORS['text_muted']};
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}}
+
+/* ── Buttons ── */
+.stButton > button {{
+    background: {COLORS['accent']};
+    color: #ffffff;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 13px;
+    padding: 8px 16px;
+    transition: background 0.2s ease;
+    width: 100%;
+}}
+.stButton > button:hover {{
+    background: {COLORS['accent_hover']};
+    color: #ffffff;
+    border: none;
+}}
+.stButton > button[kind="secondary"] {{
+    background: {COLORS['bg_card']};
+    color: {COLORS['text_secondary']};
+    border: 1px solid {COLORS['border']};
+}}
+.stButton > button[kind="secondary"]:hover {{
+    background: {COLORS['border']};
+    color: {COLORS['text_primary']};
+}}
+
+/* ── File uploader ── */
+[data-testid="stFileUploader"] {{
+    background: {COLORS['bg_card']};
+    border: 1.5px dashed {COLORS['border']};
+    border-radius: 10px;
+    padding: 10px;
+}}
+[data-testid="stFileUploader"] label {{
+    color: {COLORS['text_secondary']} !important;
+    font-size: 13px;
+}}
+
+/* ── Chat input ── */
+[data-testid="stChatInput"] {{
+    border-top: 1px solid {COLORS['border']};
+    background-color: {COLORS['bg_secondary']};
+    padding: 14px 16px 18px;
+}}
+[data-testid="stChatInput"] > div {{
+    max-width: 980px;
+    margin: 0 auto;
+}}
+[data-testid="stChatInput"] form {{
+    background: {COLORS['bg_card']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 16px;
+    padding: 10px 12px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.22);
+}}
+[data-testid="stChatInput"] textarea {{
+    background-color: transparent !important;
+    border: none !important;
+    border-radius: 12px !important;
+    color: {COLORS['text_primary']} !important;
+    font-size: 14px !important;
+    font-family: 'Inter', sans-serif !important;
+    min-height: 24px !important;
+    padding: 10px 12px !important;
+    box-shadow: none !important;
+}}
+[data-testid="stChatInput"] textarea:focus {{
+    border: none !important;
+    box-shadow: none !important;
+    outline: none !important;
+}}
+[data-testid="stChatInput"] button {{
+    background: {COLORS['accent']} !important;
+    width: 42px !important;
+    height: 42px !important;
+    min-width: 42px !important;
+    padding: 0 !important;
+    border-radius: 12px !important;
+    border: none !important;
+    margin-left: 8px !important;
+    flex-shrink: 0 !important;
+}}
+[data-testid="stChatInput"] button:hover {{
+    background: {COLORS['accent_hover']} !important;
+}}
+
+/* ── Chat message base ── */
+[data-testid="stChatMessage"] {{
+    background-color: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin-bottom: 24px !important;
+    align-items: flex-start;
+}}
+
+/* Hide Streamlit's default empty username/name labels inside chat contents */
+[data-testid="stChatMessageContent"] > div:first-child:not(:has(div)) {{
+    display: none !important;
+}}
+
+/* ── Chat messages — user (right) ── */
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {{
+    flex-direction: row-reverse !important;
+    align-items: flex-start !important;
+    gap: 16px !important;
+}}
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) [data-testid="stChatMessageContent"] {{
+    background: {COLORS['accent']} !important;
+    border-radius: 20px 4px 20px 20px !important;
+    padding: 10px 18px !important;
+    width: fit-content !important;
+    max-width: min(640px, 70%) !important;
+    margin-top: 2px !important;
+    margin-left: auto !important;
+    margin-right: 0 !important;
+    border: none !important;
+    box-shadow: 0 4px 20px rgba(108,99,255,0.35) !important;
+}}
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) [data-testid="stChatMessageContent"] *,
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) [data-testid="stChatMessageContent"] > div,
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) [data-testid="stChatMessageContent"] > div > div,
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) [data-testid="stChatMessageContent"] .stMarkdown,
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) [data-testid="stChatMessageContent"] [data-testid="stMarkdownContainer"] {{
+    margin: 0 !important;
+    padding: 0 !important;
+    margin-block-start: 0 !important;
+    margin-block-end: 0 !important;
+}}
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) [data-testid="stChatMessageContent"] p,
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) [data-testid="stChatMessageContent"] li,
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) [data-testid="stChatMessageContent"] span {{
+    color: rgba(255,255,255,0.95) !important;
+    font-size: 14px !important;
+    line-height: 1.6 !important;
+    margin: 0 !important;
+    margin-block-start: 0 !important;
+    margin-block-end: 0 !important;
+    word-break: break-word;
+}}
+
+/* ── Chat messages — assistant (left) ── */
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) {{
+    align-items: flex-start !important;
+    gap: 16px !important;
+}}
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) [data-testid="stChatMessageContent"] {{
+    background: {COLORS['bg_card']} !important;
+    border-radius: 4px 20px 20px 20px !important;
+    padding: 10px 18px !important;
+    width: fit-content !important;
+    max-width: min(820px, 86%) !important;
+    margin-top: 2px !important;
+    margin-left: 0 !important;
+    margin-right: auto !important;
+    border: 1px solid {COLORS['border']} !important;
+    border-left: 3px solid {COLORS['accent']} !important;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.25) !important;
+}}
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) [data-testid="stChatMessageContent"] *,
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) [data-testid="stChatMessageContent"] > div,
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) [data-testid="stChatMessageContent"] > div > div,
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) [data-testid="stChatMessageContent"] .stMarkdown,
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) [data-testid="stChatMessageContent"] [data-testid="stMarkdownContainer"] {{
+    margin: 0 !important;
+    padding: 0 !important;
+    margin-block-start: 0 !important;
+    margin-block-end: 0 !important;
+}}
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) [data-testid="stChatMessageContent"] p,
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) [data-testid="stChatMessageContent"] li {{
+    color: {COLORS['text_primary']} !important;
+    font-size: 14px !important;
+    line-height: 1.6 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    margin-block-start: 0 !important;
+    margin-block-end: 0 !important;
+    word-break: break-word;
+}}
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) [data-testid="stChatMessageContent"] p + p,
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) [data-testid="stChatMessageContent"] li + li {{
+    margin-top: 6px !important;
+}}
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) [data-testid="stChatMessageContent"] strong {{
+    color: {COLORS['text_primary']} !important;
+    font-weight: 600;
+}}
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) [data-testid="stChatMessageContent"] code {{
+    background: {COLORS['bg_secondary']} !important;
+    color: {COLORS['accent']} !important;
+    padding: 2px 6px !important;
+    border-radius: 4px !important;
+    font-size: 13px !important;
+}}
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) [data-testid="stChatMessageContent"] hr {{
+    border-color: {COLORS['border']} !important;
+    margin: 10px 0 !important;
+}}
+
+/* ── Avatar icons ── */
+[data-testid="chatAvatarIcon-user"] {{
+    background: {COLORS['accent']} !important;
+    border: none !important;
+    flex-shrink: 0;
+    margin: 0 !important;
+}}
+[data-testid="chatAvatarIcon-assistant"] {{
+    background: {COLORS['accent']} !important;
+    border: none !important;
+    flex-shrink: 0;
+    margin: 0 !important;
+}}
+
+/* ── Welcome screen ── */
+.welcome-container {{
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 24px;
+    text-align: center;
+}}
+.welcome-icon {{
+    font-size: 52px;
+    margin-bottom: 16px;
+    filter: drop-shadow(0 0 20px rgba(108,99,255,0.5));
+}}
+.welcome-title {{
+    font-size: 26px;
+    font-weight: 700;
+    color: {COLORS['text_primary']};
+    margin-bottom: 12px;
+    letter-spacing: -0.5px;
+}}
+.welcome-subtitle {{
+    font-size: 15px;
+    color: {COLORS['text_secondary']};
+    max-width: 460px;
+    line-height: 1.6;
+}}
+
+/* ── Spinner ── */
+[data-testid="stSpinner"] {{
+    color: {COLORS['accent']} !important;
+}}
+
+/* ── Divider ── */
+hr {{
+    border-color: {COLORS['border']} !important;
+    margin: 16px 0 !important;
+}}
+
+/* ── Expander ── */
+[data-testid="stExpander"] {{
+    background: {COLORS['bg_card']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 10px;
+}}
+[data-testid="stExpander"] summary {{
+    color: {COLORS['text_secondary']};
+    font-size: 13px;
+    font-weight: 500;
+}}
+
+/* ── Alerts ── */
+[data-testid="stAlert"] {{
+    border-radius: 10px;
+    border: none;
+    font-size: 13px;
+}}
+[data-testid="stAlert"] p {{
+    margin: 0 !important;
+}}
+[data-testid="stChatMessageContent"] [data-testid="stAlert"] {{
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+}}
+[data-testid="stChatMessageContent"] [data-testid="stAlert"] > div {{
+    padding: 0 !important;
+}}
+[data-testid="stChatMessageContent"] [data-testid="stAlert"] [data-testid="stMarkdownContainer"] {{
+    display:flex;
+    align-items: center;
+}}
+
+/* ── DataFrame ── */
+[data-testid="stDataFrame"] {{
+    border-radius: 8px;
+    overflow: hidden;
+}}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar {{ width: 4px; height: 4px; }}
+::-webkit-scrollbar-track {{ background: {COLORS['bg_secondary']}; }}
+::-webkit-scrollbar-thumb {{ background: {COLORS['border']}; border-radius: 4px; }}
+::-webkit-scrollbar-thumb:hover {{ background: {COLORS['accent']}; }}
+</style>
+""", unsafe_allow_html=True)
+
+
+@st.cache_data(ttl=5, show_spinner=False)
+def _fetch_indexed_documents(api_base_url: str) -> list[str]:
+    resp = requests.get(f"{api_base_url}/documents", timeout=10)
+    if resp.status_code != 200:
+        return []
+    payload = resp.json() or {}
+    docs = payload.get("documents") or []
+    if not isinstance(docs, list):
+        return []
+    return [str(d) for d in docs if d]
+
+
+def get_indexed_files() -> list[str]:
+    # Prefer backend source-of-truth (Qdrant metadata), fall back to local disk.
+    try:
+        docs = _fetch_indexed_documents(API_BASE_URL)
+        if docs:
+            return docs
+    except Exception:
+        pass
+
+    try:
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+        return [f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(".pdf")]
+    except Exception:
+        return []
+
+
+def format_error_message(response: requests.Response) -> str:
+    text = response.text.lower()
+    if "quota" in text or "resourceexhausted" in text or "429" in text or "resource_exhausted" in text:
+        return (
+            "⚠️ **Gemini API quota exceeded.** "
+            "You are on the free tier which has a daily request limit. "
+            "Try again tomorrow or upgrade to a paid plan."
+        )
+    try:
+        detail = response.json().get("detail", response.text)
+    except Exception:
+        detail = response.text
+    return f"❌ **Error {response.status_code}:** {detail}"
+
+
+def create_query_job(question: str, history: list[str]) -> tuple[str | None, str | None]:
+    try:
+        resp = requests.post(
+            f"{API_BASE_URL}/query/jobs",
+            json={"question": question, "history": history},
+            timeout=30,
+        )
+    except requests.exceptions.ConnectionError:
+        return None, f"❌ **Connection Error:** Could not connect to the backend at {API_BASE_URL}."
+    except requests.exceptions.Timeout:
+        return None, "⏱️ **Timeout:** The request took too long. Please try again."
+
+    if resp.status_code != 200:
+        return None, format_error_message(resp)
+
+    try:
+        payload = resp.json()
+        return payload.get("job_id"), None
+    except Exception:
+        return None, f"❌ **Error {resp.status_code}:** {resp.text}"
+
+
+def fetch_query_job(job_id: str) -> tuple[dict | None, str | None]:
+    try:
+        resp = requests.get(f"{API_BASE_URL}/query/jobs/{job_id}", timeout=15)
+    except requests.exceptions.ConnectionError:
+        return None, f"❌ **Connection Error:** Could not connect to the backend at {API_BASE_URL}."
+    except requests.exceptions.Timeout:
+        return None, "⏱️ **Timeout:** The request took too long. Please try again."
+
+    if resp.status_code != 200:
+        return None, format_error_message(resp)
+
+    try:
+        return resp.json(), None
+    except Exception:
+        return None, f"❌ **Error {resp.status_code}:** {resp.text}"
+
+
+def build_reply_from_job_result(prompt: str, job: dict) -> str:
+    result = (job or {}).get("result") or {}
+    answer = result.get("answer", "")
+    sources = result.get("sources", "")
+    api_metrics = result.get("metrics", {})
+
+    if answer:
+        log_query(
+            prompt,
+            api_metrics.get("total_time", 0),
+            len(answer),
+            retrieval_time=api_metrics.get("retrieval_time", 0),
+            generation_time=api_metrics.get("generation_time", 0),
+            docs_retrieved=api_metrics.get("docs_retrieved", 0),
+            chunks_processed=api_metrics.get("chunks_processed", 0),
+            retrieval_scores=api_metrics.get("retrieval_scores", []),
+        )
+
+    reply = answer or "❌ **Error:** Empty response."
+    if sources:
+        reply += f"\n\n---\n📚 **Sources:**\n{sources}"
+    return reply
+
+
+def maybe_resume_pending_job():
+    job_id = st.session_state.get("pending_job_id")
+    prompt = st.session_state.get("pending_job_prompt")
+    if not job_id or not prompt:
+        return
+
+    # If user is not on the chat page, don't update UI.
+    # Keep the pending job so it can be resumed later.
+    if not _is_chat_active():
+        return
+
+    with st.spinner("Searching for an answer..."):
+        started = time.monotonic()
+        while True:
+            if not _is_chat_active():
+                # User navigated away; stop sending UI updates.
+                return
+
+            job, err = fetch_query_job(job_id)
+            if err:
+                reply = err
+                break
+
+            status = (job or {}).get("status")
+            if status in {"pending", "running"}:
+                if time.monotonic() - started > 60:
+                    # Keep job id so user can come back later without losing progress
+                    return
+                time.sleep(0.8)
+                continue
+
+            if status == "succeeded":
+                reply = build_reply_from_job_result(prompt, job)
+                break
+
+            if status == "failed":
+                reply = f"❌ **Error:** {(job or {}).get('error', 'Unknown error')}"
+                break
+
+            reply = f"❌ **Error:** Unknown job status: {status}"
+            break
+
+    st.session_state.pop("pending_job_id", None)
+    st.session_state.pop("pending_job_prompt", None)
+
+    if not _is_chat_active():
+        # User navigated away right after completion.
+        return
+
+    with st.chat_message("assistant"):
+        st.write_stream(stream_text(reply))
+    st.session_state.messages.append({"role": "assistant", "content": reply})
+
+
+def stream_text(text: str):
+    for word in text.split(" "):
+        if not _is_chat_active():
+            return
+        yield word + " "
+        time.sleep(0.02)
+
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("""
+    <div class="brand-header">
+        <div class="brand-title">Docu<span>Mind</span></div>
+        <div class="brand-subtitle">AI · Document Intelligence</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Upload
+    st.markdown('<div class="section-label">Upload Document</div>', unsafe_allow_html=True)
+
+    delete_after_index = (
+        (os.getenv("DOCUMIND_DELETE_UPLOADED_PDFS") or os.getenv("DELETE_UPLOADED_PDFS") or "0").strip() == "1"
+    )
+    if delete_after_index:
+        st.markdown(
+            f'<div style="font-size:12px;color:{COLORS["text_muted"]};margin-top:-6px;margin-bottom:10px;">'
+            'ℹ️ Uploaded PDFs will be deleted after indexing.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+    uploaded_file = st.file_uploader("", type=["pdf"], label_visibility="collapsed")
+    if uploaded_file:
+        if st.button("⚡ Index Document", type="primary", use_container_width=True):
+            with st.spinner("Indexing document..."):
+                try:
+                    resp = requests.post(
+                        f"{API_BASE_URL}/upload",
+                        files={"file": (uploaded_file.name, uploaded_file.getvalue(), "application/pdf")},
+                        timeout=120,
+                    )
+                    if resp.status_code == 200:
+                        st.success(f"✅ {uploaded_file.name} indexed successfully!")
+                        _fetch_indexed_documents.clear()
+                        st.rerun()
+                    else:
+                        st.error(format_error_message(resp))
+                except requests.exceptions.ConnectionError:
+                    st.error("❌ Could not connect to the backend.")
+                except requests.exceptions.Timeout:
+                    st.error("⏱️ Upload timed out. Please try again.")
+                except requests.exceptions.RequestException as exc:
+                    st.error(f"❌ Upload failed: {exc}")
+
+    st.markdown("<hr>", unsafe_allow_html=True)
+
+    # Indexed docs
+    st.markdown('<div class="section-label">Indexed Documents</div>', unsafe_allow_html=True)
+    indexed = get_indexed_files()
+    if indexed:
+        for f in indexed:
+            name = f[:-4] if f.endswith(".pdf") else f
+            st.markdown(
+                f'''<div class="doc-pill">
+                <span class="doc-pill-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M7 3.75h7.5L19.25 8.5V19A2.25 2.25 0 0 1 17 21.25H7A2.25 2.25 0 0 1 4.75 19V6A2.25 2.25 0 0 1 7 3.75Z" stroke="currentColor" stroke-width="1.5"/>
+                        <path d="M14.5 3.75V8.5H19.25" stroke="currentColor" stroke-width="1.5"/>
+                        <path d="M8 12.75h8M8 16.25h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                    </svg>
+                </span>
+                <span class="doc-pill-text">{name}</span>
+                </div>''',
+                unsafe_allow_html=True,
+            )
+    else:
+        st.markdown(
+            '<div class="empty-state">📭 No documents yet.<br>Upload a PDF to get started.</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<hr>", unsafe_allow_html=True)
+
+    # Actions
+    st.markdown('<div class="section-label">Actions</div>', unsafe_allow_html=True)
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🗑️ Delete Docs", use_container_width=True):
+            with st.spinner("Deleting..."):
+                try:
+                    resp = requests.delete(f"{API_BASE_URL}/documents", timeout=60)
+                    resp.raise_for_status()
+                    st.session_state.messages = []
+                    _fetch_indexed_documents.clear()
+                    st.rerun()
+                except requests.exceptions.ConnectionError:
+                    st.error("❌ Could not connect.")
+                except requests.exceptions.Timeout:
+                    st.error("⏱️ Delete timed out. Please try again.")
+                except requests.exceptions.HTTPError as exc:
+                    st.error(f"❌ {exc.response.text if exc.response else str(exc)}")
+                except requests.exceptions.RequestException as exc:
+                    st.error(f"❌ Delete failed: {exc}")
+    with col2:
+        if st.button("💬 Clear Chat", use_container_width=True):
+            st.session_state.messages = []
+            st.rerun()
+
+
+# ── Chat ──────────────────────────────────────────────────────────────────────
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# Welcome screen when no messages
+if not st.session_state.messages:
+    st.markdown("""
+    <div class="welcome-container">
+        <div class="welcome-icon">🧠</div>
+        <div class="welcome-title">DocuMind AI</div>
+        <div class="welcome-subtitle">
+            Ask anything about the documents you have uploaded.
+            The AI will find answers directly from your document sources.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# Render history
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# If user navigated away mid-request, resume polling and render the result.
+maybe_resume_pending_job()
+
+# Input
+if prompt := st.chat_input("Ask something about your documents..."):
+    if not get_indexed_files():
+        with st.chat_message("assistant"):
+            st.warning("⚠️ No documents indexed yet. Please upload a PDF in the sidebar first.")
+    else:
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        # Create a background job so the backend keeps working even if user navigates away.
+        formatted_history = [
+            f"{m['role']}: {m['content']}"
+            for m in st.session_state.messages[:-1]
+        ]
+
+        job_id, err = create_query_job(prompt, formatted_history)
+        if err or not job_id:
+            reply = err or "❌ **Error:** Failed to create job."
+            with st.chat_message("assistant"):
+                st.write_stream(stream_text(reply))
+            st.session_state.messages.append({"role": "assistant", "content": reply})
+        else:
+            st.session_state["pending_job_id"] = job_id
+            st.session_state["pending_job_prompt"] = prompt
+            maybe_resume_pending_job()
+
