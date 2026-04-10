@@ -20,7 +20,7 @@
 ![HuggingFace%20Spaces](https://img.shields.io/badge/Hugging%20Face-Spaces-FFD21E?logo=huggingface)
 ![GitHub%20Actions](https://img.shields.io/badge/GitHub%20Actions-Automation-2088FF?logo=githubactions)
 
-**DocuMind** is an MVP-ready document question-answering system built with **FastAPI** (backend) and **Streamlit** (frontend). It runs a **hybrid RAG pipeline** (query rewriting → dense+lexical retrieval → fusion → reranking → answer generation) backed by **Qdrant**.
+**DocuMind** is a document question-answering system built with **FastAPI** (backend) and **Streamlit** (frontend). It runs a **hybrid RAG pipeline** (query rewriting → dense+lexical retrieval → fusion → reranking → answer generation) backed by **Qdrant**.
 
 ---
 
