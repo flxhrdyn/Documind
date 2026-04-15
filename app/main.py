@@ -18,6 +18,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from .embeddings import get_embeddings
 from .index_api import router as index_router
+from .config import PRELOAD_EMBEDDINGS_ON_STARTUP
 from .rag_pipeline import rag_pipeline
 from .qdrant_conn import close_qdrant_client
 
@@ -31,7 +32,11 @@ app.include_router(index_router)
 
 @app.on_event("startup")
 def _startup() -> None:
-    # Warm embedding model once so first indexing request is faster.
+    # Optional warm-up; disabled by default for constrained deployments.
+    if not PRELOAD_EMBEDDINGS_ON_STARTUP:
+        logger.info("Embedding preload skipped (DOCUMIND_PRELOAD_EMBEDDINGS=0)")
+        return
+
     try:
         get_embeddings()
         logger.info("Embedding model preloaded")

@@ -42,6 +42,11 @@ def _env_float(name: str, default: float, *, min_value: float) -> float:
     return max(value, min_value)
 
 
+def _env_str(name: str, default: str) -> str:
+    raw = (os.getenv(name) or "").strip()
+    return raw if raw else default
+
+
 def _configure_huggingface_hub_defaults() -> None:
     """Set safe HF Hub defaults (timeouts, offline mode, telemetry).
 
@@ -85,9 +90,18 @@ DELETE_UPLOADED_PDFS = (
 )
 
 # Chunking
-CHUNK_SIZE = 800
-CHUNK_OVERLAP = 100
-INDEXING_BATCH_SIZE = _env_int("DOCUMIND_INDEXING_BATCH_SIZE", default=128, min_value=8)
+CHUNK_SIZE = _env_int("DOCUMIND_CHUNK_SIZE", default=800, min_value=128)
+CHUNK_OVERLAP = _env_int("DOCUMIND_CHUNK_OVERLAP", default=100, min_value=0)
+if CHUNK_OVERLAP >= CHUNK_SIZE:
+    CHUNK_OVERLAP = max(0, CHUNK_SIZE // 4)
+
+# Smaller default batch is safer for constrained runtimes (HF Spaces free tier,
+# small containers) and often avoids long stalls from memory pressure.
+INDEXING_BATCH_SIZE = _env_int("DOCUMIND_INDEXING_BATCH_SIZE", default=32, min_value=8)
+
+# Startup preload can make the first request faster, but on constrained
+# deployments it may increase cold-start time and memory pressure.
+PRELOAD_EMBEDDINGS_ON_STARTUP = _env_bool("DOCUMIND_PRELOAD_EMBEDDINGS", default="0")
 
 # Retrieval
 RETRIEVAL_K = 10
@@ -107,7 +121,7 @@ HYBRID_LEXICAL_WEIGHT = _env_float("DOCUMIND_HYBRID_LEXICAL_WEIGHT", default=1.0
 RERANK_TOP_K = 5
 
 # Models
-LLM_MODEL = "gemini-3.1-flash-lite-preview"
+LLM_MODEL = _env_str("DOCUMIND_LLM_MODEL", "gemini-3.1-flash-lite-preview")
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 RERANKER_MODEL = (os.getenv("RERANKER_MODEL") or "cross-encoder/ms-marco-MiniLM-L-6-v2").strip()
 

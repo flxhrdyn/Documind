@@ -8,6 +8,7 @@ collection.
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 from langchain_community.document_loaders import PyPDFLoader
@@ -42,12 +43,14 @@ def index_documents(file_path: str) -> None:
     if not path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
 
+    total_start = time.monotonic()
     logger.info("Indexing PDF: %s", path.name)
 
     # Load PDF
+    load_start = time.monotonic()
     loader = PyPDFLoader(file_path)
     documents = loader.load()
-    logger.info("Loaded %d pages", len(documents))
+    logger.info("Loaded %d pages (%.2fs)", len(documents), time.monotonic() - load_start)
 
     # Split documents into chunks
     splitter = RecursiveCharacterTextSplitter(
@@ -55,9 +58,10 @@ def index_documents(file_path: str) -> None:
         chunk_overlap=CHUNK_OVERLAP,
     )
 
+    split_start = time.monotonic()
     chunks = splitter.split_documents(documents)
 
-    logger.info("Created %d chunks", len(chunks))
+    logger.info("Created %d chunks (%.2fs)", len(chunks), time.monotonic() - split_start)
 
     # Embedding model (cached)
     embeddings = get_embeddings()
@@ -88,8 +92,14 @@ def index_documents(file_path: str) -> None:
                 collection_name=QDRANT_COLLECTION,
                 embedding=embeddings,
             )
+            upsert_start = time.monotonic()
             vectorstore.add_documents(chunks, batch_size=INDEXING_BATCH_SIZE)
-            logger.info("Indexed %d chunks into Qdrant", len(chunks))
+            logger.info(
+                "Indexed %d chunks into Qdrant (batch=%d, %.2fs)",
+                len(chunks),
+                INDEXING_BATCH_SIZE,
+                time.monotonic() - upsert_start,
+            )
             break
         except Exception as exc:
             if attempt < (max_attempts - 1) and is_qdrant_client_closed_error(exc):
@@ -101,4 +111,4 @@ def index_documents(file_path: str) -> None:
 
     # Update local metrics for the dashboard.
     log_document_indexed()
-    logger.info("Indexing complete")
+    logger.info("Indexing complete (%.2fs total)", time.monotonic() - total_start)
