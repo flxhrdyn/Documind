@@ -16,12 +16,20 @@ from langchain_qdrant import QdrantVectorStore
 from qdrant_client.models import Distance, VectorParams
 
 from .embeddings import get_embeddings
-from .config import CHUNK_OVERLAP, CHUNK_SIZE, QDRANT_COLLECTION
+from .config import CHUNK_OVERLAP, CHUNK_SIZE, INDEXING_BATCH_SIZE, QDRANT_COLLECTION
 from .metrics import log_document_indexed
-from .qdrant_conn import get_qdrant_client
+from .qdrant_conn import get_qdrant_client, is_qdrant_client_closed_error, recreate_qdrant_client
 
 
 logger = logging.getLogger(__name__)
+
+
+def _collection_exists(client, collection_name: str) -> bool:
+    if hasattr(client, "collection_exists"):
+        return bool(client.collection_exists(collection_name=collection_name))
+
+    collections = client.get_collections().collections
+    return collection_name in [collection.name for collection in collections]
 
 
 def index_documents(file_path: str) -> None:
@@ -54,36 +62,42 @@ def index_documents(file_path: str) -> None:
     # Embedding model (cached)
     embeddings = get_embeddings()
 
-    client = get_qdrant_client()
+    max_attempts = 2
+    for attempt in range(max_attempts):
+        client = get_qdrant_client() if attempt == 0 else recreate_qdrant_client()
 
-    # Check if collection exists
-    collections = client.get_collections().collections
-    collection_names = [collection.name for collection in collections]
+        try:
+            if not _collection_exists(client, QDRANT_COLLECTION):
+                logger.info("Creating Qdrant collection: %s", QDRANT_COLLECTION)
 
-    if QDRANT_COLLECTION not in collection_names:
-        logger.info("Creating Qdrant collection: %s", QDRANT_COLLECTION)
+                # Determine embedding vector size once from the configured model.
+                sample_vector = embeddings.embed_query("sample")
+                vector_size = len(sample_vector)
 
-        # Determine embedding vector size
-        sample_vector = embeddings.embed_query("sample")
-        vector_size = len(sample_vector)
+                client.create_collection(
+                    collection_name=QDRANT_COLLECTION,
+                    vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
+                )
 
-        client.create_collection(
-            collection_name=QDRANT_COLLECTION,
-            vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
-        )
+                logger.info("Qdrant collection created")
+            else:
+                logger.info("Using existing Qdrant collection: %s", QDRANT_COLLECTION)
 
-        logger.info("Qdrant collection created")
-    else:
-        logger.info("Using existing Qdrant collection: %s", QDRANT_COLLECTION)
-
-    # Add documents using QdrantVectorStore (works for both new and existing)
-    vectorstore = QdrantVectorStore(
-        client=client,
-        collection_name=QDRANT_COLLECTION,
-        embedding=embeddings,
-    )
-    vectorstore.add_documents(chunks)
-    logger.info("Indexed %d chunks into Qdrant", len(chunks))
+            vectorstore = QdrantVectorStore(
+                client=client,
+                collection_name=QDRANT_COLLECTION,
+                embedding=embeddings,
+            )
+            vectorstore.add_documents(chunks, batch_size=INDEXING_BATCH_SIZE)
+            logger.info("Indexed %d chunks into Qdrant", len(chunks))
+            break
+        except Exception as exc:
+            if attempt < (max_attempts - 1) and is_qdrant_client_closed_error(exc):
+                logger.warning(
+                    "Qdrant client was closed during indexing; recreating client and retrying once"
+                )
+                continue
+            raise
 
     # Update local metrics for the dashboard.
     log_document_indexed()

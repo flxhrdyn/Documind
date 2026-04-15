@@ -249,19 +249,17 @@ def clear_documents():
             if os.path.isfile(file_path):
                 os.remove(file_path)
 
-    # Close any open client first to avoid Windows file lock issues.
-    close_qdrant_client()
-
     try:
         if QDRANT_URL:
-            # Server mode: delete collection instead of deleting local storage folder.
+            # Server mode: delete collection without closing shared client.
             client = get_qdrant_client()
             existing = [c.name for c in client.get_collections().collections]
             if QDRANT_COLLECTION in existing:
                 client.delete_collection(collection_name=QDRANT_COLLECTION)
-            close_qdrant_client()
         else:
             # Local mode: remove the storage directory.
+            # Close open client first to avoid Windows file lock issues.
+            close_qdrant_client()
             if os.path.exists(QDRANT_PATH):
                 shutil.rmtree(QDRANT_PATH)
     except Exception as exc:

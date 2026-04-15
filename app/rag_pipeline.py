@@ -15,6 +15,7 @@ from typing import Any
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from .config import GEMINI_API_KEY, LLM_MODEL, RETRIEVAL_K
+from .qdrant_conn import close_qdrant_client, is_qdrant_client_closed_error
 from .reranker import rerank
 from .retriever import build_retriever, retrieve_documents
 from .utils import format_docs
@@ -86,12 +87,7 @@ def rewrite_query(question: str, history: Any) -> str:
     return _get_llm().invoke(prompt).content
 
 
-def rag_pipeline(question: str, history: Any) -> dict[str, Any]:
-    """Run the RAG pipeline.
-
-    Returns a dict containing the answer, a sources string, and timing metrics.
-    """
-
+def _run_rag_pipeline_once(question: str, history: Any) -> dict[str, Any]:
     total_start = time.monotonic()
     retriever, vectorstore, client = build_retriever()
 
@@ -148,3 +144,23 @@ def rag_pipeline(question: str, history: Any) -> dict[str, Any]:
         # Qdrant client is managed as a process-wide singleton and closed on
         # application shutdown.
         pass
+
+
+def rag_pipeline(question: str, history: Any) -> dict[str, Any]:
+    """Run the RAG pipeline.
+
+    Returns a dict containing the answer, a sources string, and timing metrics.
+    """
+
+    max_attempts = 2
+    for attempt in range(max_attempts):
+        try:
+            return _run_rag_pipeline_once(question, history)
+        except Exception as exc:
+            if attempt < (max_attempts - 1) and is_qdrant_client_closed_error(exc):
+                logger.warning("Qdrant client was closed during query; recreating and retrying once")
+                close_qdrant_client()
+                continue
+            raise
+
+    raise RuntimeError("Unexpected RAG retry state")

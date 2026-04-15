@@ -9,6 +9,7 @@ back to local on-disk storage at `QDRANT_PATH`.
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 from typing import Optional
@@ -18,8 +19,31 @@ from qdrant_client import QdrantClient
 from .config import QDRANT_API_KEY, QDRANT_PATH, QDRANT_URL
 
 
+logger = logging.getLogger(__name__)
+
 _client_lock = threading.Lock()
 _client: Optional[QdrantClient] = None
+
+
+def _create_qdrant_client() -> QdrantClient:
+    if QDRANT_URL:
+        # Cloud/server mode.
+        # Default to HTTP/REST for reliability (some networks block gRPC).
+        prefer_grpc = os.getenv("QDRANT_PREFER_GRPC", "0").strip() == "1"
+        return QdrantClient(
+            url=QDRANT_URL,
+            api_key=QDRANT_API_KEY,
+            prefer_grpc=prefer_grpc,
+        )
+
+    return QdrantClient(path=QDRANT_PATH)
+
+
+def is_qdrant_client_closed_error(exc: BaseException) -> bool:
+    """Return True if an exception indicates the Qdrant client is closed."""
+
+    msg = str(exc).strip().lower()
+    return "client has been closed" in msg or "client is closed" in msg
 
 
 def get_qdrant_client() -> QdrantClient:
@@ -34,25 +58,24 @@ def get_qdrant_client() -> QdrantClient:
     """
 
     global _client
-    if _client is not None:
+    with _client_lock:
+        if _client is None:
+            _client = _create_qdrant_client()
         return _client
 
+
+def recreate_qdrant_client() -> QdrantClient:
+    """Force-close old client (if any) and create a fresh one."""
+
+    global _client
     with _client_lock:
         if _client is not None:
-            return _client
+            try:
+                _client.close()
+            except Exception:
+                logger.warning("Ignoring failure while closing stale Qdrant client", exc_info=True)
 
-        if QDRANT_URL:
-            # Cloud/server mode.
-            # Default to HTTP/REST for reliability (some networks block gRPC).
-            prefer_grpc = os.getenv("QDRANT_PREFER_GRPC", "0").strip() == "1"
-            _client = QdrantClient(
-                url=QDRANT_URL,
-                api_key=QDRANT_API_KEY,
-                prefer_grpc=prefer_grpc,
-            )
-        else:
-            _client = QdrantClient(path=QDRANT_PATH)
-
+        _client = _create_qdrant_client()
         return _client
 
 
@@ -61,5 +84,9 @@ def close_qdrant_client() -> None:
     global _client
     with _client_lock:
         if _client is not None:
-            _client.close()
-            _client = None
+            try:
+                _client.close()
+            except Exception:
+                logger.warning("Ignoring failure while closing Qdrant client", exc_info=True)
+            finally:
+                _client = None

@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel, Field
+from .embeddings import get_embeddings
 from .index_api import router as index_router
 from .rag_pipeline import rag_pipeline
 from .qdrant_conn import close_qdrant_client
@@ -26,6 +27,16 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="DocuMind API")
 app.include_router(index_router)
+
+
+@app.on_event("startup")
+def _startup() -> None:
+    # Warm embedding model once so first indexing request is faster.
+    try:
+        get_embeddings()
+        logger.info("Embedding model preloaded")
+    except Exception:
+        logger.warning("Embedding preload failed; falling back to lazy init", exc_info=True)
 
 
 @app.on_event("shutdown")
