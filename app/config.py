@@ -72,7 +72,7 @@ _configure_huggingface_hub_defaults()
 
 # Qdrant
 QDRANT_PATH = str(BASE_DIR / "qdrant_storage")
-QDRANT_COLLECTION = "documind_collection"
+QDRANT_COLLECTION = "invenioai_collection"
 
 # Optional: use Qdrant server/cloud instead of local storage.
 _qdrant_url = (os.getenv("QDRANT_URL") or "").strip()
@@ -86,42 +86,42 @@ METRICS_FILE = str(BASE_DIR / "metrics.json")
 # When enabled, uploaded PDFs are deleted from local disk after indexing.
 # Useful for deployments with ephemeral disks.
 DELETE_UPLOADED_PDFS = (
-    (os.getenv("DOCUMIND_DELETE_UPLOADED_PDFS") or os.getenv("DELETE_UPLOADED_PDFS") or "0").strip() == "1"
+    (os.getenv("INVENIOAI_DELETE_UPLOADED_PDFS") or os.getenv("DELETE_UPLOADED_PDFS") or "0").strip() == "1"
 )
 
 # Chunking
-CHUNK_SIZE = _env_int("DOCUMIND_CHUNK_SIZE", default=800, min_value=128)
-CHUNK_OVERLAP = _env_int("DOCUMIND_CHUNK_OVERLAP", default=100, min_value=0)
+CHUNK_SIZE = _env_int("INVENIOAI_CHUNK_SIZE", default=800, min_value=128)
+CHUNK_OVERLAP = _env_int("INVENIOAI_CHUNK_OVERLAP", default=100, min_value=0)
 if CHUNK_OVERLAP >= CHUNK_SIZE:
     CHUNK_OVERLAP = max(0, CHUNK_SIZE // 4)
 
 # Smaller default batch is safer for constrained runtimes (HF Spaces free tier,
 # small containers) and often avoids long stalls from memory pressure.
-INDEXING_BATCH_SIZE = _env_int("DOCUMIND_INDEXING_BATCH_SIZE", default=32, min_value=8)
+INDEXING_BATCH_SIZE = _env_int("INVENIOAI_INDEXING_BATCH_SIZE", default=32, min_value=8)
 
 # Startup preload can make the first request faster, but on constrained
 # deployments it may increase cold-start time and memory pressure.
-PRELOAD_EMBEDDINGS_ON_STARTUP = _env_bool("DOCUMIND_PRELOAD_EMBEDDINGS", default="0")
+PRELOAD_EMBEDDINGS_ON_STARTUP = _env_bool("INVENIOAI_PRELOAD_EMBEDDINGS", default="0")
 
 # Retrieval
 RETRIEVAL_K = 10
 
 # Hybrid retrieval (dense + lexical) settings.
 # Hybrid uses weighted reciprocal-rank fusion (RRF) before reranking and is
-# enabled by default. Set DOCUMIND_ENABLE_HYBRID_SEARCH=0 to force dense-only.
-USE_HYBRID_SEARCH = _env_bool("DOCUMIND_ENABLE_HYBRID_SEARCH", default="1")
-HYBRID_LEXICAL_K = _env_int("DOCUMIND_HYBRID_LEXICAL_K", default=10, min_value=1)
-HYBRID_FUSION_LIMIT = _env_int("DOCUMIND_HYBRID_FUSION_LIMIT", default=20, min_value=1)
-HYBRID_MAX_LEXICAL_DOCS = _env_int("DOCUMIND_HYBRID_MAX_LEXICAL_DOCS", default=3000, min_value=100)
-HYBRID_RRF_K = _env_int("DOCUMIND_HYBRID_RRF_K", default=60, min_value=1)
-HYBRID_DENSE_WEIGHT = _env_float("DOCUMIND_HYBRID_DENSE_WEIGHT", default=1.0, min_value=0.0)
-HYBRID_LEXICAL_WEIGHT = _env_float("DOCUMIND_HYBRID_LEXICAL_WEIGHT", default=1.0, min_value=0.0)
+# enabled by default. Set INVENIOAI_ENABLE_HYBRID_SEARCH=0 to force dense-only.
+USE_HYBRID_SEARCH = _env_bool("INVENIOAI_ENABLE_HYBRID_SEARCH", default="1")
+HYBRID_LEXICAL_K = _env_int("INVENIOAI_HYBRID_LEXICAL_K", default=10, min_value=1)
+HYBRID_FUSION_LIMIT = _env_int("INVENIOAI_HYBRID_FUSION_LIMIT", default=20, min_value=1)
+HYBRID_MAX_LEXICAL_DOCS = _env_int("INVENIOAI_HYBRID_MAX_LEXICAL_DOCS", default=3000, min_value=100)
+HYBRID_RRF_K = _env_int("INVENIOAI_HYBRID_RRF_K", default=60, min_value=1)
+HYBRID_DENSE_WEIGHT = _env_float("INVENIOAI_HYBRID_DENSE_WEIGHT", default=1.0, min_value=0.0)
+HYBRID_LEXICAL_WEIGHT = _env_float("INVENIOAI_HYBRID_LEXICAL_WEIGHT", default=1.0, min_value=0.0)
 
 # Reranking
 RERANK_TOP_K = 5
 
 # Models
-LLM_MODEL = _env_str("DOCUMIND_LLM_MODEL", "gemini-3.1-flash-lite-preview")
+LLM_MODEL = _env_str("INVENIOAI_LLM_MODEL", "gemini-3.1-flash-lite-preview")
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 RERANKER_MODEL = (os.getenv("RERANKER_MODEL") or "cross-encoder/ms-marco-MiniLM-L-6-v2").strip()
 

@@ -26,7 +26,7 @@ from .qdrant_conn import close_qdrant_client
 logger = logging.getLogger(__name__)
 
 
-app = FastAPI(title="DocuMind API")
+app = FastAPI(title="InvenioAI API")
 app.include_router(index_router)
 
 
@@ -34,7 +34,7 @@ app.include_router(index_router)
 def _startup() -> None:
     # Optional warm-up; disabled by default for constrained deployments.
     if not PRELOAD_EMBEDDINGS_ON_STARTUP:
-        logger.info("Embedding preload skipped (DOCUMIND_PRELOAD_EMBEDDINGS=0)")
+        logger.info("Embedding preload skipped (INVENIOAI_PRELOAD_EMBEDDINGS=0)")
         return
 
     try:
@@ -154,4 +154,4 @@ def get_query_job(job_id: str):
 
 @app.get("/")
 def root():
-    return {"status": "DocuMind API running"}
+    return {"status": "InvenioAI API running"}

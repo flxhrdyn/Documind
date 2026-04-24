@@ -1,4 +1,4 @@
-"""Shared Streamlit theme tokens for DocuMind.
+"""Shared Streamlit theme tokens for InvenioAI.
 
 Single source of truth for the UI color palette used by Streamlit pages.
 """

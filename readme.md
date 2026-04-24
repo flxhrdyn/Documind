@@ -1,4 +1,4 @@
-# 🧠 DocuMind — Document Q&A (RAG) + Analytics
+# 🧠 InvenioAI — Document Q&A (RAG) + Analytics
 
 **Core Stack**
 
@@ -15,12 +15,12 @@
 
 **Delivery**
 
-[![CI](https://github.com/flxhrdyn/Documind/actions/workflows/ci.yml/badge.svg)](https://github.com/flxhrdyn/Documind/actions/workflows/ci.yml)
-[![CD](https://github.com/flxhrdyn/Documind/actions/workflows/sync-to-hf-space.yml/badge.svg)](https://github.com/flxhrdyn/Documind/actions/workflows/sync-to-hf-space.yml)
+[![CI](https://github.com/flxhrdyn/InvenioAI/actions/workflows/ci.yml/badge.svg)](https://github.com/flxhrdyn/InvenioAI/actions/workflows/ci.yml)
+[![CD](https://github.com/flxhrdyn/InvenioAI/actions/workflows/sync-to-hf-space.yml/badge.svg)](https://github.com/flxhrdyn/InvenioAI/actions/workflows/sync-to-hf-space.yml)
 ![HuggingFace%20Spaces](https://img.shields.io/badge/Hugging%20Face-Spaces-FFD21E?logo=huggingface)
 ![GitHub%20Actions](https://img.shields.io/badge/GitHub%20Actions-Automation-2088FF?logo=githubactions)
 
-**DocuMind** is a document question-answering system built with **FastAPI** (backend) and **Streamlit** (frontend). It runs a **hybrid RAG pipeline** (query rewriting → dense+lexical retrieval → fusion → reranking → answer generation) backed by **Qdrant**.
+**InvenioAI** is a document question-answering system built with **FastAPI** (backend) and **Streamlit** (frontend). It runs a **hybrid RAG pipeline** (query rewriting → dense+lexical retrieval → fusion → reranking → answer generation) backed by **Qdrant**.
 
 ---
 
@@ -36,7 +36,7 @@
 
 ## 🔗 Live Demo
 
-- Hugging Face Space: https://felixhrdyn-documind.hf.space
+- Hugging Face Space: https://felixhrdyn-invenioai.hf.space
 
 For hosted deployments, this repo provides:
 
@@ -48,7 +48,7 @@ For hosted deployments, this repo provides:
 
 ## 🎯 Problem Statement
 
-When you have a set of PDF documents, it’s tedious to manually search for answers. DocuMind turns PDFs into a searchable knowledge base and lets you ask questions with answers grounded in retrieved context, while tracking basic performance metrics.
+When you have a set of PDF documents, it’s tedious to manually search for answers. InvenioAI turns PDFs into a searchable knowledge base and lets you ask questions with answers grounded in retrieved context, while tracking basic performance metrics.
 
 ---
 
@@ -85,7 +85,7 @@ Pipeline (high-level):
 Current retrieval mode:
 
 - Default mode: hybrid retrieval (dense + lexical BM25) fused via weighted RRF
-- Dense-only mode is available as fallback via `DOCUMIND_ENABLE_HYBRID_SEARCH=0`
+- Dense-only mode is available as fallback via `INVENIOAI_ENABLE_HYBRID_SEARCH=0`
 - Final-stage CrossEncoder reranking for context selection
 
 ### Cloud runtime architecture (recommended for Azure)
@@ -225,25 +225,25 @@ QDRANT_API_KEY=
 QDRANT_PREFER_GRPC=0
 
 # Optional: Streamlit -> backend URL
-DOCUMIND_API_BASE_URL=http://localhost:8000
+INVENIOAI_API_BASE_URL=http://localhost:8000
 
 # Hybrid retrieval mode (default on, set 0 to force dense-only)
-DOCUMIND_ENABLE_HYBRID_SEARCH=1
+INVENIOAI_ENABLE_HYBRID_SEARCH=1
 
 # Optional: hybrid retrieval tuning
-DOCUMIND_HYBRID_LEXICAL_K=10
-DOCUMIND_HYBRID_FUSION_LIMIT=20
-DOCUMIND_HYBRID_MAX_LEXICAL_DOCS=3000
-DOCUMIND_HYBRID_RRF_K=60
-DOCUMIND_HYBRID_DENSE_WEIGHT=1.0
-DOCUMIND_HYBRID_LEXICAL_WEIGHT=1.0
+INVENIOAI_HYBRID_LEXICAL_K=10
+INVENIOAI_HYBRID_FUSION_LIMIT=20
+INVENIOAI_HYBRID_MAX_LEXICAL_DOCS=3000
+INVENIOAI_HYBRID_RRF_K=60
+INVENIOAI_HYBRID_DENSE_WEIGHT=1.0
+INVENIOAI_HYBRID_LEXICAL_WEIGHT=1.0
 
 # Optional: delete PDFs after indexing
-DOCUMIND_DELETE_UPLOADED_PDFS=0
+INVENIOAI_DELETE_UPLOADED_PDFS=0
 
 # Optional: upload/indexing timeout for Streamlit -> backend (seconds)
 # Useful for large PDFs and cold starts
-DOCUMIND_UPLOAD_TIMEOUT_SECONDS=600
+INVENIOAI_UPLOAD_TIMEOUT_SECONDS=600
 
 # Optional: Hugging Face Hub timeouts
 HF_HUB_CONNECT_TIMEOUT=30
@@ -273,8 +273,8 @@ use **Qdrant server/cloud mode** by setting `QDRANT_URL`.
 ### Docker (all-in-one)
 
 ```bash
-docker build -t documind .
-docker run -p 7860:7860 documind
+docker build -t invenioai .
+docker run -p 7860:7860 invenioai
 ```
 
 Then open `http://localhost:7860`.
@@ -282,8 +282,8 @@ Then open `http://localhost:7860`.
 ### Docker (backend-only, optional)
 
 ```bash
-docker build -t documind-api -f Dockerfile.api .
-docker run -p 8000:8000 documind-api
+docker build -t invenioai-api -f Dockerfile.api .
+docker run -p 8000:8000 invenioai-api
 ```
 
 ### Hugging Face Spaces (Docker) via CI/CD
@@ -309,8 +309,8 @@ Secrets (recommended):
 Variables (recommended):
 
 - `QDRANT_URL` (if using Qdrant Cloud)
-- `DOCUMIND_DELETE_UPLOADED_PDFS=1` (optional, useful on ephemeral disks)
-- `DOCUMIND_UPLOAD_TIMEOUT_SECONDS=600` (optional, for large PDFs/cold starts)
+- `INVENIOAI_DELETE_UPLOADED_PDFS=1` (optional, useful on ephemeral disks)
+- `INVENIOAI_UPLOAD_TIMEOUT_SECONDS=600` (optional, for large PDFs/cold starts)
 - `QDRANT_PREFER_GRPC=0` (optional; HTTP/REST is often more reliable)
 - `STREAMLIT_ENABLE_CORS` (optional override)
 - `STREAMLIT_ENABLE_XSRF_PROTECTION` (optional override)
@@ -398,28 +398,28 @@ az login
 az extension add --name containerapp --upgrade
 
 # 2) Create resource group
-az group create --name rg-documind --location southeastasia
+az group create --name rg-invenioai --location southeastasia
 
 # 3) Create Container Apps environment
 az containerapp env create \
-       --name cae-documind \
-       --resource-group rg-documind \
+       --name cae-invenioai \
+       --resource-group rg-invenioai \
        --location southeastasia
 
 # 4) Create ACR (replace with globally-unique name)
-az acr create --name <yourAcrName> --resource-group rg-documind --sku Basic
+az acr create --name <yourAcrName> --resource-group rg-invenioai --sku Basic
 
 # 5) Build and push image from repo root
-az acr build --registry <yourAcrName> --image documind:latest --resource-group rg-documind .
+az acr build --registry <yourAcrName> --image invenioai:latest --resource-group rg-invenioai .
 
 # 6) Build image URL
-IMAGE=$(az acr show --name <yourAcrName> --resource-group rg-documind --query loginServer -o tsv)/documind:latest
+IMAGE=$(az acr show --name <yourAcrName> --resource-group rg-invenioai --query loginServer -o tsv)/invenioai:latest
 
 # 7) Create app (replace secret values)
 az containerapp create \
-       --name documind-app \
-       --resource-group rg-documind \
-       --environment cae-documind \
+       --name invenioai-app \
+       --resource-group rg-invenioai \
+       --environment cae-invenioai \
        --image $IMAGE \
        --ingress external \
        --target-port 7860 \
@@ -430,16 +430,16 @@ az containerapp create \
        --secrets gemini-api-key=<GEMINI_API_KEY> qdrant-api-key=<QDRANT_API_KEY> \
        --env-vars \
               PORT=7860 \
-              DOCUMIND_API_BASE_URL=http://127.0.0.1:8000 \
+              INVENIOAI_API_BASE_URL=http://127.0.0.1:8000 \
               QDRANT_URL=<QDRANT_URL> \
               QDRANT_PREFER_GRPC=0 \
-              DOCUMIND_DELETE_UPLOADED_PDFS=1 \
-              DOCUMIND_UPLOAD_TIMEOUT_SECONDS=600 \
+              INVENIOAI_DELETE_UPLOADED_PDFS=1 \
+              INVENIOAI_UPLOAD_TIMEOUT_SECONDS=600 \
               GEMINI_API_KEY=secretref:gemini-api-key \
               QDRANT_API_KEY=secretref:qdrant-api-key
 
 # 8) Get public URL
-az containerapp show --name documind-app --resource-group rg-documind --query properties.configuration.ingress.fqdn -o tsv
+az containerapp show --name invenioai-app --resource-group rg-invenioai --query properties.configuration.ingress.fqdn -o tsv
 ```
 
 ### Required environment variables in cloud
@@ -450,11 +450,11 @@ az containerapp show --name documind-app --resource-group rg-documind --query pr
 
 ### Recommended optional environment variables
 
-- `DOCUMIND_DELETE_UPLOADED_PDFS=1`
-- `DOCUMIND_UPLOAD_TIMEOUT_SECONDS=600`
+- `INVENIOAI_DELETE_UPLOADED_PDFS=1`
+- `INVENIOAI_UPLOAD_TIMEOUT_SECONDS=600`
 - `QDRANT_PREFER_GRPC=0`
-- `DOCUMIND_ENABLE_HYBRID_SEARCH=0` only if you need dense-only mode
-- `DOCUMIND_HYBRID_RRF_K`, `DOCUMIND_HYBRID_DENSE_WEIGHT`, `DOCUMIND_HYBRID_LEXICAL_WEIGHT` for fusion tuning
+- `INVENIOAI_ENABLE_HYBRID_SEARCH=0` only if you need dense-only mode
+- `INVENIOAI_HYBRID_RRF_K`, `INVENIOAI_HYBRID_DENSE_WEIGHT`, `INVENIOAI_HYBRID_LEXICAL_WEIGHT` for fusion tuning
 - `STREAMLIT_ENABLE_CORS` and `STREAMLIT_ENABLE_XSRF_PROTECTION` only if your proxy path requires override
 
 ### If you want no cold start
@@ -476,7 +476,7 @@ If scale-to-zero startup latency is not acceptable:
 ## 📁 Project Structure
 
 ```
-documind/
+invenioai/
 ├── app/                     # FastAPI backend + RAG pipeline
 ├── frontend/                # Streamlit UI + dashboard page
 ├── tests/                   # Unit tests

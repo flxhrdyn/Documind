@@ -1,4 +1,4 @@
-"""DocuMind Streamlit dashboard.
+"""InvenioAI Streamlit dashboard.
 
 Renders a lightweight analytics view based on the local `metrics.json` file
 written by the backend.
@@ -26,14 +26,14 @@ from app.metrics import (
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="DocuMind · Dashboard",
+    page_title="InvenioAI · Dashboard",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 # Mark this page as active so the chat page can cancel any in-flight UI updates.
-st.session_state["documind_active_page"] = "dashboard"
+st.session_state["invenioai_active_page"] = "dashboard"
 
 # ── Design System (mirrors main app) ─────────────────────────────────────────
 
@@ -194,7 +194,7 @@ def _color_for(val: float) -> str:
 with st.sidebar:
     st.markdown("""
     <div class="brand-header">
-        <div class="brand-title">Docu<span>Mind</span></div>
+        <div class="brand-title">Invenio<span>AI</span></div>
         <div class="brand-subtitle">AI · Document Intelligence</div>
     </div>
     """, unsafe_allow_html=True)

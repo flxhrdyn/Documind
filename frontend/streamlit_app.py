@@ -1,7 +1,7 @@
-"""DocuMind Streamlit chat UI.
+"""InvenioAI Streamlit chat UI.
 
 This Streamlit app is a thin client for the FastAPI backend. Configure the
-backend URL with `DOCUMIND_API_BASE_URL` (defaults to `http://localhost:8000`).
+backend URL with `INVENIOAI_API_BASE_URL` (defaults to `http://localhost:8000`).
 """
 
 import os
@@ -18,9 +18,9 @@ from app.config import UPLOAD_DIR
 from app.metrics import log_query
 from frontend.theme import COLORS
 
-API_BASE_URL = os.getenv("DOCUMIND_API_BASE_URL", "http://localhost:8000").rstrip("/")
+API_BASE_URL = os.getenv("INVENIOAI_API_BASE_URL", "http://localhost:8000").rstrip("/")
 
-ACTIVE_PAGE_KEY = "documind_active_page"
+ACTIVE_PAGE_KEY = "invenioai_active_page"
 
 
 def _is_hf_spaces_runtime() -> bool:
@@ -30,7 +30,7 @@ def _is_hf_spaces_runtime() -> bool:
 def _get_upload_timeout_seconds() -> int:
     # Upload + indexing may take longer on cold starts, especially in HF Spaces.
     default_timeout = 600 if _is_hf_spaces_runtime() else 120
-    raw = (os.getenv("DOCUMIND_UPLOAD_TIMEOUT_SECONDS") or "").strip()
+    raw = (os.getenv("INVENIOAI_UPLOAD_TIMEOUT_SECONDS") or "").strip()
     if not raw:
         return default_timeout
 
@@ -50,12 +50,12 @@ MAX_UPLOAD_DURATION_SAMPLES = 10
 
 
 def _get_assistant_typing_enabled() -> bool:
-    raw = (os.getenv("DOCUMIND_ASSISTANT_TYPING_EFFECT") or "1").strip().lower()
+    raw = (os.getenv("INVENIOAI_ASSISTANT_TYPING_EFFECT") or "1").strip().lower()
     return raw in {"1", "true", "yes", "on"}
 
 
 def _get_assistant_word_delay_seconds() -> float:
-    raw = (os.getenv("DOCUMIND_ASSISTANT_TYPING_WORD_DELAY_SECONDS") or "0.016").strip()
+    raw = (os.getenv("INVENIOAI_ASSISTANT_TYPING_WORD_DELAY_SECONDS") or "0.016").strip()
     try:
         value = float(raw)
     except ValueError:
@@ -64,7 +64,7 @@ def _get_assistant_word_delay_seconds() -> float:
 
 
 def _get_assistant_typing_max_words() -> int:
-    raw = (os.getenv("DOCUMIND_ASSISTANT_TYPING_MAX_WORDS") or "140").strip()
+    raw = (os.getenv("INVENIOAI_ASSISTANT_TYPING_MAX_WORDS") or "140").strip()
     try:
         value = int(raw)
     except ValueError:
@@ -152,7 +152,7 @@ def _render_assistant_message(reply: str) -> None:
     placeholder.markdown(reply)
 
 st.set_page_config(
-    page_title="DocuMind AI",
+    page_title="InvenioAI",
     page_icon="🧠",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -865,7 +865,7 @@ def maybe_resume_pending_job():
 with st.sidebar:
     st.markdown("""
     <div class="brand-header">
-        <div class="brand-title">Docu<span>Mind</span></div>
+        <div class="brand-title">Invenio<span>AI</span></div>
         <div class="brand-subtitle">AI · Document Intelligence</div>
     </div>
     """, unsafe_allow_html=True)
@@ -874,7 +874,7 @@ with st.sidebar:
     st.markdown('<div class="section-label">Upload Document</div>', unsafe_allow_html=True)
 
     delete_after_index = (
-        (os.getenv("DOCUMIND_DELETE_UPLOADED_PDFS") or os.getenv("DELETE_UPLOADED_PDFS") or "0").strip() == "1"
+        (os.getenv("INVENIOAI_DELETE_UPLOADED_PDFS") or os.getenv("DELETE_UPLOADED_PDFS") or "0").strip() == "1"
     )
     if delete_after_index:
         st.markdown(
@@ -973,7 +973,7 @@ if not st.session_state.messages:
     st.markdown("""
     <div class="welcome-container">
         <div class="welcome-icon">🧠</div>
-        <div class="welcome-title">DocuMind AI</div>
+        <div class="welcome-title">InvenioAI</div>
         <div class="welcome-subtitle">
             Ask anything about the documents you have uploaded.
             The AI will find answers directly from your document sources.
