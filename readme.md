@@ -1,7 +1,8 @@
 <div align="center">
+  <img src="docs/assets/invenioai_banner.png" alt="InvenioAI Logo" width="280" style="border-radius: 12px; margin-bottom: 10px;">
 
-  # 🧠 InvenioAI — Advanced RAG for Document Q&A
-  **Hybrid Search, RAG Fusion, and Chain-of-Thought (CoT) Reasoning.**
+  <h1>InvenioAI — Advanced RAG for Document Q&A</h1>
+  <p><b>Hybrid Search, RAG Fusion, and Chain-of-Thought (CoT) Reasoning.</b></p>
   
   [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com/)
   [![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://streamlit.io/)
@@ -22,6 +23,17 @@ It transforms static enterprise PDF documents into a searchable, intelligent kno
 ## Live Demo
 
 - **Hugging Face Space**: [https://felixhrdyn-invenioai.hf.space](https://felixhrdyn-invenioai.hf.space)
+
+## 🎬 Demo Video
+
+<div align="center">
+  <kbd>
+    <video src="https://github.com/user-attachments/assets/7b03817b-30d7-4285-b24a-679797983aa7" width="100%" controls autoplay loop muted playsinline style="border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
+      Your browser does not support the video tag.
+    </video>
+  </kbd>
+  <p><i>Interactive Demo: hybrid search retrieval, and multi-stage reasoning.</i></p>
+</div>
 
 ## Technical Features
 
