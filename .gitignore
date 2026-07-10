@@ -32,7 +32,6 @@ env/
 ENV/
 .venv
 .python-version
-uv.lock
 
 # IDEs
 .vscode/

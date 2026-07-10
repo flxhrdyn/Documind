@@ -30,8 +30,9 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    # No host port mapping: only `backend` needs Redis, reached over the
+    # internal Docker network via the `redis` service name. Exposing 6379 to
+    # the host would put an unauthenticated Redis instance on the network.
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes

@@ -338,7 +338,7 @@ def _run_rag_pipeline_with_query(standalone_query: str, original_question: str, 
     reranked_docs, retrieval_scores = rerank(standalone_query, retrieved_docs)
     retrieval_time = time.monotonic() - retrieval_start
 
-    context, sources_str, sources_json = format_docs(reranked_docs)
+    context, sources_str, sources_json = format_docs(reranked_docs, retrieval_scores)
     prompt = RAG_PROMPT.format(context=context, question=original_question, sources=sources_str)
 
     generation_start = time.monotonic()
@@ -524,7 +524,7 @@ async def rag_pipeline_stream_async(query: str, chat_history: list[str]):
         metadata["reranked_docs"] = len(top_docs)
 
         yield json.dumps({"step": "generating"}) + "\n"
-        context_text, sources_str, sources_json = format_docs(top_docs)
+        context_text, sources_str, sources_json = format_docs(top_docs, retrieval_scores)
         # Use the user's original wording (not the rewritten standalone query) so
         # the answer matches the language/tone the user actually typed - the sync
         # path already does this via `original_question`.

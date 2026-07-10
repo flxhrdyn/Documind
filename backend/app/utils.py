@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Tuple, List, Dict
+from typing import Any, Iterable, Optional, Tuple, List, Dict
 
 
-def format_docs(docs: Iterable[Any]) -> Tuple[str, str, List[Dict[str, Any]]]:
+def format_docs(
+    docs: Iterable[Any], scores: Optional[List[float]] = None
+) -> Tuple[str, str, List[Dict[str, Any]]]:
     """Build the context block and a readable sources list with structured metadata.
 
     Args:
         docs: Iterable of LangChain `Document`-like objects.
+        scores: Optional reranker scores, paired with `docs` by index (as
+            returned by `reranker.rerank()`). `doc.metadata` never carries a
+            rerank score on its own - it's chunk metadata from indexing, not
+            retrieval - so without this the "score" field below is always 0.0.
 
     Returns:
         A tuple `(context, sources_str, sources_json)`
@@ -22,20 +28,22 @@ def format_docs(docs: Iterable[Any]) -> Tuple[str, str, List[Dict[str, Any]]]:
     sources_json = []
     source_files: set[str] = set()
 
-    for doc in docs_list:
+    for i, doc in enumerate(docs_list):
         metadata = getattr(doc, "metadata", None) or {}
         source_path = metadata.get("source", metadata.get("source_file", "unknown"))
         if not isinstance(source_path, str):
             source_path = "unknown"
         filename = source_path.split("\\")[-1].split("/")[-1]
         source_files.add(filename)
-        
+
+        score = scores[i] if scores is not None and i < len(scores) else metadata.get("score", 0.0)
+
         sources_json.append({
             "file": filename,
             "text": doc.page_content,
             "page": metadata.get("page_label") or metadata.get("page_number") or metadata.get("page", 0),
             "header": metadata.get("Header 3") or metadata.get("Header 2") or metadata.get("Header 1") or "",
-            "score": metadata.get("score", 0.0)
+            "score": score
         })
 
     sources_str = "\n".join(f"- {filename}" for filename in sorted(source_files))
@@ -43,19 +51,24 @@ def format_docs(docs: Iterable[Any]) -> Tuple[str, str, List[Dict[str, Any]]]:
 
 
 class ThinkingParser:
-    """Stateful parser for streaming RAG responses with <thinking> tags."""
+    """Stateful parser for streaming RAG responses with <thinking> tags.
+
+    Handles any number of <thinking>...</thinking> blocks, not just one -
+    the prompt asks the model for a single block up front, but nothing stops
+    a model from emitting more than one, and treating a second block as
+    plain answer text would leak reasoning into the visible response.
+    """
 
     def __init__(self):
         self.buffer = ""
         self.inside_thinking = False
-        self.thinking_done = False
 
     def feed(self, chunk: str) -> Iterable[Tuple[str, str]]:
         """Feed a chunk of text and yield (type, content) pairs."""
         self.buffer += chunk
 
         while self.buffer:
-            if not self.inside_thinking and not self.thinking_done:
+            if not self.inside_thinking:
                 start_tag = "<thinking>"
                 if start_tag in self.buffer:
                     idx = self.buffer.find(start_tag)
@@ -104,17 +117,16 @@ class ThinkingParser:
                     if thought_content:
                         yield "thinking", thought_content
                     self.inside_thinking = False
-                    self.thinking_done = True
                     self.buffer = self.buffer[idx + len(end_tag):]
                     continue
-                
+
                 if "</" in self.buffer:
                     idx = self.buffer.find("</")
                     if idx > 0:
                         yield "thinking", self.buffer[:idx]
                         self.buffer = self.buffer[idx:]
                         continue
-                    
+
                     if len(self.buffer) < len(end_tag):
                         if end_tag.startswith(self.buffer):
                             break
@@ -130,12 +142,6 @@ class ThinkingParser:
                     yield "thinking", self.buffer
                     self.buffer = ""
                     break
-            
-            else:
-                # After thinking is done, everything is a token
-                yield "token", self.buffer
-                self.buffer = ""
-                break
 
     def flush(self) -> Iterable[Tuple[str, str]]:
         """Yield any remaining content in the buffer."""
