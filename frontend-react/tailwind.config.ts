@@ -19,7 +19,8 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['"Manrope"', 'system-ui', 'sans-serif'],
+        sans: ['"Inter"', 'system-ui', 'sans-serif'],
+        display: ['"Outfit"', '"Inter"', 'sans-serif'],
         mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
       },
     },

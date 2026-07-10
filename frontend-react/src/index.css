@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
 @import "tailwindcss";
 @config "../tailwind.config.ts";
 
@@ -6,30 +6,30 @@
 
 :root {
   color-scheme: light;
-  --color-bg: #f5f6f7;
+  --color-bg: #f6f7f8;
   --color-surface: #ffffff;
-  --color-surface-2: #edeff2;
-  --color-ink: #16181d;
-  --color-ink-muted: #62666f;
+  --color-surface-2: #eef0f2;
+  --color-ink: #14161a;
+  --color-ink-muted: #676c76;
   --color-line: #dfe2e6;
-  --color-accent: #d98c1d;
-  --color-accent-soft: #e8a94f;
-  --color-accent-ink: #8a5510;
-  --color-accent-fg: #1c1206;
+  --color-accent: #0d9488;
+  --color-accent-soft: #14b8a6;
+  --color-accent-ink: #0f766e;
+  --color-accent-fg: #f2fbf9;
 }
 
 .dark {
   color-scheme: dark;
-  --color-bg: #101216;
-  --color-surface: #1a1d23;
-  --color-surface-2: #21252c;
-  --color-ink: #edeff2;
-  --color-ink-muted: #9198a3;
-  --color-line: #2c313a;
-  --color-accent: #f0a93b;
-  --color-accent-soft: #f3bd65;
-  --color-accent-ink: #f6c67a;
-  --color-accent-fg: #1c1206;
+  --color-bg: #0a0b0d;
+  --color-surface: #121317;
+  --color-surface-2: #17181d;
+  --color-ink: #e7e9ec;
+  --color-ink-muted: #82868f;
+  --color-line: #23252b;
+  --color-accent: #2dd4bf;
+  --color-accent-soft: #5eead4;
+  --color-accent-ink: #5eead4;
+  --color-accent-fg: #06231f;
 }
 
 body {

@@ -27,9 +27,10 @@ export function useChat() {
     const trimmed = text.trim();
     if (!trimmed || isGenerating) return;
 
-    const userMsg: ChatMessage = { id: `u-${Date.now()}`, role: 'user', content: trimmed };
+    const now = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const userMsg: ChatMessage = { id: `u-${Date.now()}`, role: 'user', content: trimmed, timestamp: now() };
     const assistantId = `a-${Date.now()}`;
-    const assistantMsg: ChatMessage = { id: assistantId, role: 'assistant', content: '' };
+    const assistantMsg: ChatMessage = { id: assistantId, role: 'assistant', content: '', timestamp: now() };
 
     const history = messagesRef.current.map((m) => `${m.role}: ${m.content}`);
     setMessages((prev) => [...prev, userMsg, assistantMsg]);

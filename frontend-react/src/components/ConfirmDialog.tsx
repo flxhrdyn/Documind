@@ -17,21 +17,21 @@ export default function ConfirmDialog({
       onClick={onCancel}
     >
       <div
-        className="w-full max-w-sm rounded-2xl bg-surface p-6 shadow-2xl"
+        className="w-full max-w-sm rounded-2xl border border-line bg-surface p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-lg font-semibold">{title}</h3>
-        <p className="text-sm text-ink-muted mt-2">{message}</p>
-        <div className="flex justify-end gap-2 mt-5">
+        <h3 className="text-sm font-semibold font-display text-ink">{title}</h3>
+        <p className="text-xs text-ink-muted mt-2 leading-relaxed">{message}</p>
+        <div className="flex justify-end gap-2.5 mt-5">
           <button
             onClick={onCancel}
-            className="px-4 py-2 rounded-lg text-sm font-medium hover:bg-surface-2 transition-colors"
+            className="px-3.5 py-1.5 text-xs font-medium text-ink-muted bg-surface-2 border border-line hover:bg-surface-2/80 rounded-xl transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
-            className="px-4 py-2 rounded-lg text-sm font-medium bg-accent text-accent-fg hover:bg-accent-soft transition-colors"
+            className="px-3.5 py-1.5 text-xs font-medium text-white bg-rose-600 hover:bg-rose-500 rounded-xl transition-colors"
           >
             {confirmLabel}
           </button>

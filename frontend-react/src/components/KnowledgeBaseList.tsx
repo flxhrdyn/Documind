@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FileText, Trash2 } from 'lucide-react';
+import { FileText, Trash2, Database } from 'lucide-react';
 import { useDocuments, useDeleteDocument, useDeleteAllDocuments } from '../hooks/useDocuments';
 import ConfirmDialog from './ConfirmDialog';
 
@@ -12,48 +12,58 @@ export default function KnowledgeBaseList() {
   const docs = data?.documents ?? [];
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-2.5">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
-          Knowledge Base
-        </h2>
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Database className="w-3.5 h-3.5 text-accent" />
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Knowledge Base</h3>
+        </div>
         {docs.length > 0 && (
-          <span className="text-[11px] font-mono text-ink-muted">{docs.length}</span>
+          <button
+            onClick={() => setConfirmAll(true)}
+            className="text-xs font-medium text-rose-500 hover:text-rose-400 transition-colors"
+          >
+            Clear All
+          </button>
         )}
       </div>
+
       {isLoading && <p className="text-xs text-ink-muted">Loading...</p>}
-      {isError && <p className="text-xs text-accent-ink">Cannot reach backend.</p>}
+      {isError && <p className="text-xs text-rose-500">Cannot reach backend.</p>}
+
       {!isLoading && !isError && docs.length === 0 && (
-        <p className="text-xs text-ink-muted">No documents yet.</p>
+        <div className="flex flex-col items-center justify-center py-8 px-4 rounded-xl border border-line bg-surface-2/20 text-center">
+          <Database className="w-6 h-6 text-ink-muted/40 mb-2" />
+          <p className="text-xs font-medium text-ink-muted">No documents indexed yet</p>
+          <p className="text-[10px] text-ink-muted/70 mt-0.5">Upload a PDF file above to train the knowledge base</p>
+        </div>
       )}
-      <ul className="flex flex-col gap-0.5">
+
+      <div className="space-y-1.5 max-h-80 overflow-y-auto pr-0.5">
         {docs.map((name) => (
-          <li
+          <div
             key={name}
-            className="group flex items-center gap-2.5 text-sm px-2 py-1.5 -mx-2 rounded-lg hover:bg-surface transition-colors"
+            className="group flex items-center justify-between p-2.5 rounded-xl border border-line bg-surface hover:bg-surface-2/60 transition-colors duration-200"
           >
-            <span className="w-6 h-6 rounded-md bg-surface-2 flex items-center justify-center shrink-0">
-              <FileText className="w-3.5 h-3.5 text-ink-muted" />
-            </span>
-            <span className="truncate flex-1" title={name}>{name}</span>
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="p-1.5 bg-accent/10 text-accent-ink rounded-lg shrink-0">
+                <FileText className="w-3.5 h-3.5" />
+              </span>
+              <span className="text-xs font-medium text-ink truncate" title={name}>
+                {name}
+              </span>
+            </div>
             <button
               onClick={() => deleteOne.mutate(name)}
               aria-label={`Delete ${name}`}
-              className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-muted hover:text-accent-ink transition-opacity"
+              className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-1.5 hover:bg-rose-500/10 text-ink-muted hover:text-rose-500 rounded-lg transition-all"
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
-          </li>
+          </div>
         ))}
-      </ul>
-      {docs.length > 0 && (
-        <button
-          onClick={() => setConfirmAll(true)}
-          className="mt-3 text-xs text-accent-ink hover:underline"
-        >
-          Delete all documents
-        </button>
-      )}
+      </div>
+
       <ConfirmDialog
         open={confirmAll}
         title="Delete all documents?"

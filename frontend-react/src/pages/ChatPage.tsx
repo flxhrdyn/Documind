@@ -10,7 +10,7 @@ export default function ChatPage() {
   const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant');
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-full min-h-0">
       <div className="flex-1 min-w-0">
         <ChatPanel
           messages={messages}
