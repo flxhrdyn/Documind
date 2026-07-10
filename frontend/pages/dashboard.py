@@ -247,7 +247,10 @@ if per_q:
         "ndcg":            f"nDCG@{k_val}",
         "hit_rate":        f"HR@{k_val}",
     }
-    df_display = df_table[list(display_cols.keys())].copy()
+    # Defensive: per_query_ir_metrics() normalizes every row, but reindex
+    # anyway so a future schema change or a legacy metrics.json entry can't
+    # crash the whole dashboard page with a KeyError.
+    df_display = df_table.reindex(columns=list(display_cols.keys()), fill_value=None).copy()
     df_display.columns = list(display_cols.values())
 
     # Format score columns

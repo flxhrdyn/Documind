@@ -6,35 +6,10 @@ backend URL with `INVENIOAI_API_BASE_URL` (defaults to `http://localhost:8000`).
 
 import json
 import os
-import sys
 import time
 
 import requests
 import streamlit as st
-from pathlib import Path
-
-# Add backend to path so we can use CacheManager
-sys.path.append(str(Path(__file__).parent.parent / "backend"))
-from app.cache_manager import CacheManager
-
-# Singleton-like getter for CacheManager in frontend
-@st.cache_resource
-def get_frontend_cache():
-    return CacheManager()
-
-CHAT_HISTORY_CACHE_KEY = "invenio_persistent_chat_history"
-
-def load_persistent_history():
-    cache = get_frontend_cache()
-    return cache.get(CHAT_HISTORY_CACHE_KEY) or []
-
-def save_persistent_history(messages):
-    cache = get_frontend_cache()
-    cache.set(CHAT_HISTORY_CACHE_KEY, messages)
-
-def clear_persistent_history():
-    cache = get_frontend_cache()
-    cache.set(CHAT_HISTORY_CACHE_KEY, None)
 
 st.set_page_config(
     page_title="InvenioAI | Intelligent RAG",
@@ -50,10 +25,42 @@ from theme import COLORS, CSS_VARS
 
 API_BASE_URL = os.getenv("INVENIOAI_API_BASE_URL", "http://localhost:8000").rstrip("/")
 
+# Sent with every backend request. Empty unless INVENIOAI_API_KEY is set,
+# matching the backend's opt-in auth (backend/app/auth.py).
+_api_key = (os.getenv("INVENIOAI_API_KEY") or "").strip()
+API_HEADERS = {"X-API-Key": _api_key} if _api_key else {}
+
+
+def _get_max_upload_size_mb() -> int:
+    raw = (os.getenv("INVENIOAI_MAX_UPLOAD_SIZE_MB") or "100").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 100
+
+
+MAX_UPLOAD_SIZE_MB = _get_max_upload_size_mb()
 
 
 def _is_hf_spaces_runtime() -> bool:
     return bool(os.getenv("SPACE_ID") or os.getenv("SPACE_HOST"))
+
+
+def _get_query_read_timeout_seconds() -> int:
+    # README states ~15s average, but cold model starts / long generations can
+    # run well past a fixed 60s cap and would surface as a raw ReadTimeout.
+    default_timeout = 120
+    raw = (os.getenv("INVENIOAI_QUERY_TIMEOUT_SECONDS") or "").strip()
+    if not raw:
+        return default_timeout
+    try:
+        value = int(raw)
+    except ValueError:
+        return default_timeout
+    return max(30, min(value, 600))
+
+
+QUERY_READ_TIMEOUT_SECONDS = _get_query_read_timeout_seconds()
 
 
 def _get_upload_timeout_seconds() -> int:
@@ -139,23 +146,23 @@ def _record_upload_duration(seconds: float) -> None:
 def fetch_metrics() -> tuple[dict | None, str | None]:
     """Fetch aggregate metrics from backend."""
     try:
-        resp = requests.get(f"{API_BASE_URL}/metrics", timeout=10)
+        resp = requests.get(f"{API_BASE_URL}/metrics", headers=API_HEADERS, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
             # If docs is 0, try to force a sync once on frontend startup/refresh
             if data.get("total_documents_indexed", 0) == 0:
                 try:
-                    requests.post(f"{API_BASE_URL}/metrics/sync", timeout=5)
+                    requests.post(f"{API_BASE_URL}/metrics/sync", headers=API_HEADERS, timeout=5)
                     # Re-fetch after sync
-                    resp = requests.get(f"{API_BASE_URL}/metrics", timeout=10)
+                    resp = requests.get(f"{API_BASE_URL}/metrics", headers=API_HEADERS, timeout=10)
                     if resp.status_code == 200:
                         data = resp.json()
-                except:
+                except requests.exceptions.RequestException:
                     pass
             return data, None
-        return None, f"❌ **Error {resp.status_code}:** Failed to load metrics."
-    except Exception as e:
-        return None, f"❌ **Connection Error:** {e}"
+        return None, format_error_message(resp)
+    except requests.exceptions.RequestException as e:
+        return None, format_error_message(e)
 
 
 def _estimate_upload_eta_seconds(elapsed_seconds: float) -> int | None:
@@ -351,64 +358,79 @@ tr:hover {{
 """, unsafe_allow_html=True)
 
 
-def _fetch_indexed_documents(api_base_url: str) -> list[str]:
-    """Fetch filenames from backend. We handle caching manually to avoid 
-    caching empty states during startup.
+def _fetch_indexed_documents(api_base_url: str) -> tuple[list[str], bool]:
+    """Fetch filenames from backend. Returns `(docs, backend_reachable)` so
+    callers can tell "no documents yet" apart from "couldn't reach backend" -
+    they need very different messaging.
+
+    We handle caching manually to avoid caching empty states during startup.
     """
-    cache_key = f"docs_list_{api_base_url}"
     now = time.time()
-    
+
     # Check manual cache in session_state
     if "docs_cache" in st.session_state:
         cache_data, cache_time = st.session_state.docs_cache
         if now - cache_time < 30: # 30s TTL
-            return cache_data
+            return cache_data, True
 
     try:
-        resp = requests.get(f"{api_base_url}/documents", timeout=5)
-        if resp.status_code != 200:
-            return []
-        payload = resp.json() or {}
-        
-        if isinstance(payload, list):
-            docs = [str(d) for d in payload if d]
-        else:
-            docs = [str(d) for d in (payload.get("documents") or []) if d]
-            
-        # ONLY cache if we found documents. 
-        # If empty, don't cache so we keep polling on next rerun.
-        if docs:
-            st.session_state.docs_cache = (docs, now)
-        return docs
-    except Exception:
-        return []
+        resp = requests.get(f"{api_base_url}/documents", headers=API_HEADERS, timeout=5)
+    except requests.exceptions.RequestException:
+        return [], False
+
+    if resp.status_code != 200:
+        return [], True
+
+    payload = resp.json() or {}
+    if isinstance(payload, list):
+        docs = [str(d) for d in payload if d]
+    else:
+        docs = [str(d) for d in (payload.get("documents") or []) if d]
+
+    # ONLY cache if we found documents.
+    # If empty, don't cache so we keep polling on next rerun.
+    if docs:
+        st.session_state.docs_cache = (docs, now)
+    return docs, True
 
 
-def get_indexed_files() -> list[str]:
-    # Prefer backend source-of-truth (Qdrant metadata).
+def get_indexed_files() -> tuple[list[str], bool]:
+    """Returns `(docs, backend_reachable)` - see `_fetch_indexed_documents`."""
     try:
-        docs = _fetch_indexed_documents(API_BASE_URL)
-        if docs:
-            return docs
+        return _fetch_indexed_documents(API_BASE_URL)
     except Exception:
-        pass
-
-    return []
+        return [], False
 
 
-def format_error_message(response: requests.Response) -> str:
-    text = response.text.lower()
-    if "quota" in text or "rate_limit" in text or "429" in text:
-        return (
-            "⚠️ **Groq API Rate Limit exceeded.** "
-            "You have reached the request limit for your Groq plan. "
-            "Wait a moment or check your Groq dashboard."
-        )
-    try:
-        detail = response.json().get("detail", response.text)
-    except Exception:
-        detail = response.text
-    return f"❌ **Error {response.status_code}:** {detail}"
+def format_error_message(exc) -> str:
+    """Turn a request failure into a user-facing message without leaking
+    internal exception/traceback details.
+
+    Accepts a `requests.Response` (non-2xx status, no exception raised), a
+    `requests.exceptions.RequestException` (network-level - no response
+    object), or any exception carrying an HTTP `response`
+    (e.g. from `Response.raise_for_status()`).
+    """
+    response = exc if isinstance(exc, requests.Response) else getattr(exc, "response", None)
+    if response is not None:
+        text = response.text.lower()
+        if "quota" in text or "rate_limit" in text or "429" in text:
+            return (
+                "⚠️ **Groq API Rate Limit exceeded.** "
+                "You have reached the request limit for your Groq plan. "
+                "Wait a moment or check your Groq dashboard."
+            )
+        try:
+            detail = response.json().get("detail", response.text)
+        except Exception:
+            detail = response.text
+        return f"❌ **Error {response.status_code}:** {detail}"
+
+    if isinstance(exc, requests.exceptions.ConnectionError):
+        return f"❌ **Connection Error:** Could not connect to the backend at {API_BASE_URL}."
+    if isinstance(exc, requests.exceptions.Timeout):
+        return "⏱️ **Timeout:** The request took too long. Please try again."
+    return f"❌ **Error:** {type(exc).__name__}. Please try again."
 
 
 def create_upload_job(uploaded_file) -> tuple[str | None, str | None]:
@@ -416,12 +438,11 @@ def create_upload_job(uploaded_file) -> tuple[str | None, str | None]:
         resp = requests.post(
             f"{API_BASE_URL}/upload/jobs",
             files={"file": (uploaded_file.name, uploaded_file.getvalue(), "application/pdf")},
+            headers=API_HEADERS,
             timeout=120,
         )
-    except requests.exceptions.ConnectionError:
-        return None, f"❌ **Connection Error:** Could not connect to the backend at {API_BASE_URL}."
-    except requests.exceptions.Timeout:
-        return None, "⏱️ **Timeout:** Upload request took too long. Please try again."
+    except requests.exceptions.RequestException as e:
+        return None, format_error_message(e)
 
     if resp.status_code != 200:
         return None, format_error_message(resp)
@@ -429,7 +450,7 @@ def create_upload_job(uploaded_file) -> tuple[str | None, str | None]:
     try:
         payload = resp.json()
     except Exception:
-        return None, f"❌ **Error {resp.status_code}:** {resp.text}"
+        return None, f"❌ **Error {resp.status_code}:** Unexpected response from backend."
 
     job_id = payload.get("job_id")
     if not job_id:
@@ -439,11 +460,9 @@ def create_upload_job(uploaded_file) -> tuple[str | None, str | None]:
 
 def fetch_upload_job(job_id: str) -> tuple[dict | None, str | None]:
     try:
-        resp = requests.get(f"{API_BASE_URL}/upload/jobs/{job_id}", timeout=15)
-    except requests.exceptions.ConnectionError:
-        return None, f"❌ **Connection Error:** Could not connect to the backend at {API_BASE_URL}."
-    except requests.exceptions.Timeout:
-        return None, "⏱️ **Timeout:** Checking upload job took too long."
+        resp = requests.get(f"{API_BASE_URL}/upload/jobs/{job_id}", headers=API_HEADERS, timeout=15)
+    except requests.exceptions.RequestException as e:
+        return None, format_error_message(e)
 
     if resp.status_code != 200:
         return None, format_error_message(resp)
@@ -451,7 +470,7 @@ def fetch_upload_job(job_id: str) -> tuple[dict | None, str | None]:
     try:
         return resp.json(), None
     except Exception:
-        return None, f"❌ **Error {resp.status_code}:** {resp.text}"
+        return None, f"❌ **Error {resp.status_code}:** Unexpected response from backend."
 
 
 def _render_upload_job_status(
@@ -494,8 +513,15 @@ def _render_upload_job_status(
 
 
 
+def _next_poll_interval(current: float) -> float:
+    """Back off polling frequency: 1s -> 3s -> 5s (capped), instead of a
+    fixed 1s interval for the whole (up to 3600s) indexing wait."""
+    return min(current * 2, 5.0)
+
+
 def wait_for_upload_job(job_id: str, *, status_slot=None, filename: str = "") -> tuple[bool, str]:
     started = time.monotonic()
+    poll_interval = UPLOAD_JOB_POLL_INTERVAL_SECONDS
     while True:
         elapsed = time.monotonic() - started
         eta_seconds = _estimate_upload_eta_seconds(elapsed)
@@ -524,7 +550,8 @@ def wait_for_upload_job(job_id: str, *, status_slot=None, filename: str = "") ->
                 "Please wait a moment, then click Refresh Data or reopen this page."
             )
 
-        time.sleep(UPLOAD_JOB_POLL_INTERVAL_SECONDS)
+        time.sleep(poll_interval)
+        poll_interval = _next_poll_interval(poll_interval)
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -541,10 +568,15 @@ with st.sidebar:
     if delete_after_index:
         st.info('Uploaded PDFs will be deleted after indexing.')
 
-    uploaded_file = st.file_uploader("Add documents to build your AI knowledge base", type=["pdf"])
+    uploaded_file = st.file_uploader(
+        f"Add documents to build your AI knowledge base (max {MAX_UPLOAD_SIZE_MB}MB)",
+        type=["pdf"],
+    )
     if uploaded_file:
         upload_status_slot = st.empty()
-        if st.button("⚡ Process & Index", width="stretch"):
+        if uploaded_file.size > MAX_UPLOAD_SIZE_MB * 1024 * 1024:
+            st.error(f"❌ File exceeds the {MAX_UPLOAD_SIZE_MB}MB upload limit.")
+        elif st.button("⚡ Process & Index", width="stretch"):
             with st.spinner("Indexing document..."):
                 job_id, err = create_upload_job(uploaded_file)
                 if err or not job_id:
@@ -571,7 +603,7 @@ with st.sidebar:
 
     # Knowledge Base
     st.subheader("🧠 Knowledge Base")
-    indexed_files = get_indexed_files()
+    indexed_files, backend_reachable = get_indexed_files()
     if indexed_files:
         for f in indexed_files:
             col1, col2 = st.columns([0.8, 0.2])
@@ -581,54 +613,67 @@ with st.sidebar:
                 if st.button("🗑️", key=f"del_{f}"):
                     try:
                         resp = requests.delete(
-                            f"{API_BASE_URL}/documents/delete", 
+                            f"{API_BASE_URL}/documents/delete",
                             params={"filename": f},
-                            timeout=30
+                            headers=API_HEADERS,
+                            timeout=30,
                         )
                         resp.raise_for_status()
                         if "docs_cache" in st.session_state:
                             del st.session_state.docs_cache
                         st.rerun()
-                    except Exception as e:
-                        if hasattr(e, 'response') and e.response is not None:
-                            try:
-                                detail = e.response.json().get("detail", e.response.text)
-                                st.error(f"❌ Delete Failed: {detail}")
-                            except Exception:
-                                st.error(f"❌ Delete Failed: {e.response.text}")
-                        else:
-                            st.error(f"❌ Failed: {e}")
+                    except requests.exceptions.RequestException as e:
+                        st.error(format_error_message(e))
+    elif not backend_reachable:
+        st.error(f"⚠️ Cannot reach backend at {API_BASE_URL}. Documents may still be indexed.")
     else:
         st.write("No documents yet.")
     # Force spacing to match Dashboard (cancel out list container padding)
     st.markdown('<div style="margin-top: -70px;"></div>', unsafe_allow_html=True)
     
     # Action Buttons (tightly coupled to Knowledge Base)
-    if st.button("🗑️ Delete All Documents", width="stretch"):
-        with st.spinner("Deleting..."):
-            try:
-                resp = requests.delete(f"{API_BASE_URL}/documents", timeout=60)
-                resp.raise_for_status()
-                st.session_state.messages = []
-                clear_persistent_history()
-                if "docs_cache" in st.session_state:
-                    del st.session_state.docs_cache
+    # Delete-all is destructive and irreversible, so require an explicit
+    # second confirmation click before it fires.
+    if not st.session_state.get("confirm_delete_all"):
+        if st.button("🗑️ Delete All Documents", width="stretch"):
+            st.session_state.confirm_delete_all = True
+            st.rerun()
+    else:
+        st.warning("This permanently deletes all documents and chat history. Are you sure?")
+        confirm_col1, confirm_col2 = st.columns(2)
+        with confirm_col1:
+            if st.button("✅ Yes, delete all", width="stretch"):
+                with st.spinner("Deleting..."):
+                    try:
+                        resp = requests.delete(f"{API_BASE_URL}/documents", headers=API_HEADERS, timeout=60)
+                        resp.raise_for_status()
+                        st.session_state.messages = []
+                        if "docs_cache" in st.session_state:
+                            del st.session_state.docs_cache
+                        st.session_state.confirm_delete_all = False
+                        st.rerun()
+                    except requests.exceptions.RequestException as e:
+                        st.error(format_error_message(e))
+        with confirm_col2:
+            if st.button("Cancel", width="stretch"):
+                st.session_state.confirm_delete_all = False
                 st.rerun()
-            except Exception as e:
-                st.error(f"❌ Failed: {e}")
-    
+
     if st.button("💬 Clear Chat History", width="stretch"):
         st.session_state.messages = []
-        clear_persistent_history()
         st.rerun()
 
     st.markdown("<hr>", unsafe_allow_html=True)
-    
+
 
 
 # ── Chat ──────────────────────────────────────────────────────────────────────
+# Chat history lives only in st.session_state - scoped to this browser
+# session by Streamlit itself, so it can never leak between users. It won't
+# survive a full page reload, which is the correct tradeoff for a RAG demo
+# without user accounts.
 if "messages" not in st.session_state:
-    st.session_state.messages = load_persistent_history()
+    st.session_state.messages = []
 
 # Welcome screen when no messages
 if _is_chat_active():
@@ -711,8 +756,9 @@ def run_streaming_query(prompt: str, history: list[str]):
             response = requests.post(
                 f"{API_BASE_URL}/query/stream",
                 json={"question": prompt, "history": history},
+                headers=API_HEADERS,
                 stream=True,
-                timeout=(5, 60) # 5s to connect, 60s for the whole stream
+                timeout=(5, QUERY_READ_TIMEOUT_SECONDS),  # 5s to connect
             )
             response.raise_for_status()
             
@@ -777,38 +823,49 @@ def run_streaming_query(prompt: str, history: list[str]):
             
             return full_answer, sources, thoughts
 
-        except Exception as e:
-            st.error(f"❌ **Connection Error:** {e}")
+        except requests.exceptions.RequestException as e:
+            st.error(format_error_message(e))
             return None, [], []
 
 
 # Input
-if prompt := st.chat_input("Ask something about your documents..."):
-    if not get_indexed_files():
-        with st.chat_message("assistant"):
-            st.warning("⚠️ No documents indexed yet. Please upload a PDF in the sidebar first.")
+raw_prompt = st.chat_input("Ask something about your documents...")
+prompt = raw_prompt.strip() if raw_prompt else ""
+if prompt:
+    last_user_message = next(
+        (m["content"] for m in reversed(st.session_state.messages) if m["role"] == "user"),
+        None,
+    )
+    if prompt == last_user_message:
+        st.toast("You just asked that - scroll up to see the answer.")
     else:
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        save_persistent_history(st.session_state.messages)
-        with st.chat_message("user"):
-            st.markdown(prompt)
+        indexed_files, backend_reachable = get_indexed_files()
+        if not indexed_files:
+            with st.chat_message("assistant"):
+                if backend_reachable:
+                    st.warning("⚠️ No documents indexed yet. Please upload a PDF in the sidebar first.")
+                else:
+                    st.error(f"⚠️ Cannot reach the backend at {API_BASE_URL}. Please check the connection.")
+        else:
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
 
-        formatted_history = [
-            f"{m['role']}: {m['content']}"
-            for m in st.session_state.messages[:-1]
-        ]
+            formatted_history = [
+                f"{m['role']}: {m['content']}"
+                for m in st.session_state.messages[:-1]
+            ]
 
-        answer, sources, thoughts = run_streaming_query(prompt, formatted_history)
-        
-        if answer:
-            st.session_state.messages.append({
-                "role": "assistant", 
-                "content": answer,
-                "sources": sources,
-                "thoughts": thoughts
-            })
-            save_persistent_history(st.session_state.messages)
-            st.rerun()
+            answer, sources, thoughts = run_streaming_query(prompt, formatted_history)
+
+            if answer:
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": answer,
+                    "sources": sources,
+                    "thoughts": thoughts
+                })
+                st.rerun()
 
     # 5. Robust Auto-scroll (Observes height changes like expanders)
     st.markdown("""

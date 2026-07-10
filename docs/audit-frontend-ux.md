@@ -1,137 +1,137 @@
 # Audit Frontend UX & Integration - InvenioAI
 
-Tanggal: 2026-07-09.
+Tanggal: 2026-07-09. Diperbaiki: 2026-07-10.
 Scope: `frontend/streamlit_app.py`, `frontend/pages/dashboard.py`, `frontend/theme.py`.
 Tujuan: kesiapan produksi dan UX.
 
 ## Kritis
 
-### 1. Chat history global, bukan per-user (data leak lintas user)
+### 1. ~~Chat history global, bukan per-user (data leak lintas user)~~ (FIXED)
 
-File: `frontend/streamlit_app.py:25-37, 791-792, 810`.
+File: `frontend/streamlit_app.py` (`st.session_state.messages`).
 
-`CHAT_HISTORY_CACHE_KEY = "invenio_persistent_chat_history"` adalah string konstan, tidak di-scope per sesi.
-`save_persistent_history()` menulis seluruh `st.session_state.messages` ke key ini setiap giliran chat.
-`load_persistent_history()` membaca key yang sama untuk sesi browser baru mana pun.
+Status: diperbaiki, digabung dengan fix #10. `CHAT_HISTORY_CACHE_KEY`, `load_persistent_history()`,
+`save_persistent_history()`, `clear_persistent_history()`, dan seluruh dependency ke `CacheManager` backend
+dihapus total. Chat history sekarang hidup murni di `st.session_state.messages` - state yang sudah
+di-scope per browser session oleh Streamlit sendiri, jadi tidak mungkin bocor/tertimpa antar user lagi.
 
-Skenario: User A tanya soal PDF rahasia, User B buka app di tab/browser lain dan langsung melihat (atau
-menimpa) seluruh riwayat chat User A.
-
-Perbaikan: key harus per-sesi (mis. UUID session yang disimpan di cookie/`st.query_params`), bukan string
-tetap.
+Trade-off yang disengaja: history tidak lagi bertahan lewat full page reload/reconnect (sebelumnya
+"bertahan" tapi lewat mekanisme yang justru menyebabkan bug kritis ini). Untuk demo RAG tanpa akun user,
+ini trade-off yang benar - lebih aman daripada nyaman.
 
 ## Tinggi
 
-### 2. Tidak ada batas ukuran file upload PDF (client maupun server)
+### 2. ~~Tidak ada batas ukuran file upload PDF (client maupun server)~~ (FIXED)
 
-File: `frontend/streamlit_app.py:544` (uploader hanya cek ekstensi), `frontend/streamlit_app.py:418`
-(`uploaded_file.getvalue()` buffer penuh ke memori), `backend/app/index_api.py` (tidak ada guard ukuran).
+File: `frontend/streamlit_app.py` (`MAX_UPLOAD_SIZE_MB`, guard di `uploaded_file.size`).
 
-Skenario: user upload file 2GB (atau biner yang di-rename jadi .pdf), browser buffer penuh ke memori,
-upload diam-diam berjalan lama hanya dengan spinner generik, berpotensi OOM container.
+Status: diperbaiki di kedua sisi. Backend sudah dapat guard ukuran di sesi audit sebelumnya
+(`docs/audit-backend-rag-core.md` #7, `INVENIOAI_MAX_UPLOAD_SIZE_MB`). Frontend sekarang membaca env var
+yang sama dan menolak file di client (`st.error`) sebelum sempat memanggil `create_upload_job` kalau
+`uploaded_file.size` melebihi batas - tidak menunggu roundtrip ke server dulu untuk kasus umum ini.
 
-Perbaikan: cap ukuran byte di client sebelum `create_upload_job`, plus guard di server.
+### 3. ~~Timeout query 60 detik, exception mentah ditampilkan ke user~~ (FIXED)
 
-### 3. Timeout query 60 detik, exception mentah ditampilkan ke user
+File: `frontend/streamlit_app.py` (`QUERY_READ_TIMEOUT_SECONDS`, `format_error_message`).
 
-File: `frontend/streamlit_app.py:711-716, 780`.
-
-`timeout=(5, 60)` pada request streaming. README bilang rata-rata query ~15 detik, tapi kalau lebih lambat
-(model cold-start, generasi panjang), muncul `ReadTimeout` yang ditangkap `except Exception as e` lalu
-ditampilkan sebagai `❌ **Connection Error:** {e}` - bocorin representasi exception internal (socket/urllib3)
-ke end user.
-
-Perbaikan: naikkan/parameterisasi read timeout, format pesan timeout jadi ramah user, jangan `str(e)` mentah.
+Status: diperbaiki. Read timeout naik jadi 120 detik default (bisa diatur via
+`INVENIOAI_QUERY_TIMEOUT_SECONDS`) alih-alih 60 detik hardcoded. Semua exception jaringan sekarang lewat
+`format_error_message()` yang sudah dirombak untuk menerima `requests.Response` ATAU
+`requests.exceptions.RequestException` dan selalu menghasilkan pesan ramah pengguna, tidak pernah
+`str(exception)` mentah.
 
 ## Sedang
 
-### 4. Polling upload job blocking, interval tetap 1 detik
+### 4. ~~Polling upload job blocking, interval tetap 1 detik~~ (FIXED)
 
-File: `frontend/streamlit_app.py:497-527`.
+File: `frontend/streamlit_app.py` (`_next_poll_interval`, `wait_for_upload_job`).
 
-Tidak ada exponential backoff. Seluruh thread sesi Streamlit blok sinkron selama proses indexing (default
-600s, bisa sampai 3600s via `INVENIOAI_UPLOAD_TIMEOUT_SECONDS`). Kalau koneksi putus di tengah polling, tidak
-ada resume - user harus upload ulang dari awal.
+Status: diperbaiki. Interval polling sekarang backoff 1s -> 2s -> 4s -> capped di 5s, bukan tetap 1
+detik sepanjang durasi tunggu (bisa sampai 3600s). Tidak menghilangkan blocking sinkron sepenuhnya (di
+luar scope tanpa merombak model threading Streamlit), tapi mengurangi jumlah request polling secara
+signifikan untuk upload yang lama.
 
-Perbaikan: backoff interval polling (1s -> 3s -> 5s), jangan blok run script.
+### 5. ~~Query kosong/whitespace dan submit ganda tidak dicegah~~ (FIXED)
 
-### 5. Query kosong/whitespace dan submit ganda tidak dicegah
+File: `frontend/streamlit_app.py` (blok `# Input`).
 
-File: `frontend/streamlit_app.py:786`.
+Status: diperbaiki. `prompt = raw_prompt.strip() if raw_prompt else ""` menyaring whitespace-only input.
+Submit yang identik dengan pesan user terakhir di-deteksi dan ditolak dengan `st.toast()` alih-alih
+dikirim ulang ke backend (mencegah biaya pipeline RAG ganda untuk klik/enter berulang).
 
-`st.chat_input` hanya guard terhadap `None`, bukan string berisi whitespace saja, dan tidak ada pengecekan
-duplikasi terhadap pesan sebelumnya. Query semacam ini tetap dikirim ke backend dan kena biaya penuh
-pipeline RAG (embeddings + LLM).
+### 6. ~~Dashboard bisa crash kalau schema metrics.json tidak lengkap~~ (FIXED)
 
-Perbaikan: `if prompt and prompt.strip():` plus pengecekan kesamaan dengan pesan terakhir.
+File: `frontend/pages/dashboard.py` (`df_display`).
 
-### 6. Dashboard bisa crash kalau schema metrics.json tidak lengkap
+Status: diperbaiki (hardening defensif). Investigasi lebih lanjut menunjukkan `per_query_ir_metrics()` di
+backend (`backend/app/metrics.py`) sudah menormalkan setiap row lewat `.get(..., default)` untuk semua
+kolom yang dipakai `display_cols`, jadi skenario `KeyError` yang dijelaskan di temuan asli sebenarnya sudah
+tidak reproduce dengan kode backend saat ini. Tetap dipasang `df_table.reindex(columns=..., fill_value=None)`
+sebagai pengaman murah terhadap schema drift di masa depan, sesuai rekomendasi awal.
 
-File: `frontend/pages/dashboard.py:148-151, 250`.
+### 7. ~~Error saat hapus dokumen bocorin response/stack trace backend~~ (FIXED)
 
-`avg_resp` sudah di-guard terhadap pembagian nol dengan benar, tapi
-`df_display = df_table[list(display_cols.keys())]` akan `KeyError` dan meng-crash seluruh halaman Dashboard
-jika ada entri lama di `metrics.json` yang kehilangan salah satu kolom
-(question/response_time/retrieval_time/docs_retrieved/ndcg/hit_rate) - misalnya setelah perubahan schema
-atau entri yang setengah tertulis akibat query yang crash.
+File: `frontend/streamlit_app.py` (semua pemanggil `format_error_message`).
 
-Perbaikan: `.reindex(columns=..., fill_value=None)` sebelum memilih kolom tampilan.
+Status: diperbaiki. `format_error_message()` sekarang dipakai konsisten di semua path request (query,
+upload, delete satu dokumen, delete semua dokumen, fetch metrics) - tidak ada lagi jalur yang menampilkan
+`e.response.text`/`str(e)` mentah secara terpisah-pisah seperti sebelumnya.
 
-### 7. Error saat hapus dokumen bocorin response/stack trace backend
+### 8. ~~Kegagalan network di-swallow jadi "No documents yet"~~ (FIXED)
 
-File: `frontend/streamlit_app.py:592-600, 617-618`.
+File: `frontend/streamlit_app.py` (`_fetch_indexed_documents`, `get_indexed_files`).
 
-Saat `requests.delete(...).raise_for_status()` gagal, except block menampilkan
-`e.response.json().get("detail", e.response.text)` atau `e.response.text`/`str(e)` mentah lewat `st.error`.
-Kalau backend 500 dengan traceback Python di body (default FastAPI mode debug), traceback tersebut tampil
-utuh ke end user.
+Status: diperbaiki. Kedua fungsi sekarang mengembalikan `(docs, backend_reachable)` alih-alih cuma
+`list[str]`. Sidebar menampilkan banner error koneksi terpisah dari "No documents yet." kalau
+`backend_reachable=False`, dan chat input guard membedakan "belum ada dokumen" vs "backend tidak
+terjangkau" alih-alih selalu menyuruh user upload PDF.
 
-Perbaikan: pakai helper `format_error_message()` (sudah ada di baris 399) secara konsisten juga untuk path
-delete/metrics, bukan cuma query/upload.
+### 9. ~~Delete-all documents tanpa konfirmasi~~ (FIXED)
 
-### 8. Kegagalan network di-swallow jadi "No documents yet"
+File: `frontend/streamlit_app.py` (`st.session_state.confirm_delete_all`).
 
-File: `frontend/streamlit_app.py:367-384, 387-396, 787`.
-
-`_fetch_indexed_documents` / `get_indexed_files` menangkap semua exception lewat `except Exception: return
-[]`. Kegagalan network (backend down, DNS error, timeout) membuat sidebar cuma nampilin "No documents yet."
-tanpa indikasi backend tidak terjangkau, dan chat input malah menyuruh user upload PDF padahal dokumen
-sebenarnya sudah ter-index.
-
-Perbaikan: bedakan state "belum ada dokumen" vs "backend tidak terjangkau", tampilkan banner error koneksi.
-
-### 9. Delete-all documents tanpa konfirmasi
-
-File: `frontend/streamlit_app.py:607-618`.
-
-Tombol "Delete All Documents" langsung eksekusi tanpa dialog konfirmasi, dan saat sukses juga menghapus
-`st.session_state.messages` serta chat history persisten. Misclick menghapus seluruh knowledge base dan
-riwayat chat secara ireversibel, tanpa undo.
-
-Perbaikan: tambahkan checkbox/klik kedua sebagai konfirmasi sebelum eksekusi DELETE.
+Status: diperbaiki. Klik pertama "Delete All Documents" cuma memunculkan warning + tombol konfirmasi
+("Yes, delete all" / "Cancel"), eksekusi DELETE sungguhan cuma terjadi setelah klik kedua yang eksplisit.
 
 ## Arsitektural (akar masalah #1)
 
-### 10. Frontend import langsung modul internal backend via `sys.path` hack
+### 10. ~~Frontend import langsung modul internal backend via `sys.path` hack~~ (FIXED, untuk chat history)
 
-File: `frontend/streamlit_app.py:16-18`.
+File: `frontend/streamlit_app.py`.
 
-`sys.path.append(... / "backend")` lalu `from app.cache_manager import CacheManager` membuat frontend harus
-co-deploy di filesystem/container yang sama dengan backend dan berbagi konfigurasi Redis/diskcache
-(`backend/app/config.py`), alih-alih berkomunikasi murni lewat HTTP API yang sudah didokumentasikan
-(`INVENIOAI_API_BASE_URL`).
+Status: diperbaiki untuk jalur yang menyebabkan temuan #1. `sys.path.append(...)` dan
+`from app.cache_manager import CacheManager` dihapus total dari `streamlit_app.py` - frontend sekarang
+hanya bicara ke backend lewat REST API (`API_BASE_URL` + `API_HEADERS`), sesuai arsitektur yang
+didokumentasikan.
 
-Ini adalah akar penyebab temuan #1 (cache key global), dan menghalangi frontend/backend untuk pernah di-scale
-atau di-deploy terpisah - padahal arsitektur env-driven `API_BASE_URL` menyiratkan itu seharusnya mungkin.
+**Catatan cakupan**: `frontend/pages/dashboard.py` masih melakukan import langsung serupa
+(`from backend.app.metrics import ...`, `from backend.app.config import RETRIEVAL_K`) untuk baca
+`metrics.json` lokal. Ini di luar scope temuan #1 (bukan data user yang bisa bocor lintas sesi - cuma
+agregat metrics read-only), jadi sengaja tidak diubah di sesi ini. Kalau frontend/backend perlu dipisah
+jadi container yang benar-benar independen (co-deploy tidak lagi diasumsikan), ini juga perlu diganti ke
+endpoint API metrics backend yang sudah ada (`GET /metrics`).
 
-Perbaikan: frontend hanya boleh bicara ke backend lewat REST API; state chat history harus per-sesi di sisi
-frontend atau lewat endpoint backend yang menerima session/user identifier.
+## Wiring API key (tindak lanjut dari `docs/audit-backend-rag-core.md` #4)
+
+File: `frontend/streamlit_app.py` (`API_HEADERS`).
+
+Backend menambahkan auth opsional berbasis `X-API-Key` di sesi audit sebelumnya, tapi saat itu frontend
+belum ikut mengirim header ini. Sekarang `API_HEADERS` dibaca dari `INVENIOAI_API_KEY` (kosong = tidak
+mengirim header apa pun, sama seperti sebelumnya) dan dilampirkan ke **semua** request ke backend
+(`/query/stream`, `/upload/jobs*`, `/documents*`, `/metrics*`). Auth end-to-end sekarang berfungsi penuh
+kalau `INVENIOAI_API_KEY` diaktifkan di kedua sisi.
+
+## Verifikasi
+
+- `python -m py_compile` lolos untuk `streamlit_app.py` dan `dashboard.py`.
+- Smoke-run `streamlit run frontend/streamlit_app.py --server.headless true` - server start bersih, HTTP
+  200, tidak ada exception di log startup (tanpa backend jalan, untuk menguji jalur "backend unreachable"
+  dari temuan #8 tidak meng-crash aplikasi).
+- Tidak ada sisa referensi ke `CacheManager`, `sys.path`, atau fungsi `*_persistent_history` (dicek via
+  grep di seluruh `streamlit_app.py`).
 
 ## Belum diaudit
 
-Area berikut belum dicek pada sesi ini - lanjutkan kalau mau audit menyeluruh:
-
-- `backend/app/rag_pipeline.py`, `retriever.py`, `reranker.py`, `cache_manager.py`, `embeddings.py`,
-  `qdrant_conn.py`, `metrics.py` (logika inti RAG).
-- `backend/app/main.py`, `index_api.py`, `index_data.py`, `config.py` (API layer, keamanan, konkurensi).
-- Dockerfile, docker-compose.yml, start.sh, CI/CD, dependency pinning (kesiapan deployment/infra).
+- `frontend/theme.py` - hanya definisi CSS/warna, belum direview mendalam untuk masalah UX visual.
+- Uji end-to-end sungguhan di browser (klik-klik nyata dengan backend hidup) belum dilakukan - verifikasi
+  di atas terbatas pada smoke test headless dan pembacaan kode.
