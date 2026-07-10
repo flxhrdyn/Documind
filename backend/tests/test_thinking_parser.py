@@ -32,6 +32,22 @@ def test_thinking_parser_split_tags():
     assert ("thinking", "Thought") in results
     assert ("token", "Answer") in results
 
+def test_thinking_parser_multiple_thinking_blocks():
+    """A model that emits more than one <thinking> block must have both
+    captured as 'thinking', not have the second block leak into the answer."""
+    parser = ThinkingParser()
+    results = list(parser.feed(
+        "<thinking>Block A</thinking>Answer1<thinking>Block B</thinking>Answer2"
+    ))
+
+    assert results == [
+        ("thinking", "Block A"),
+        ("token", "Answer1"),
+        ("thinking", "Block B"),
+        ("token", "Answer2"),
+    ]
+
+
 def test_thinking_parser_multiple_chunks_token():
     parser = ThinkingParser()
     results = []

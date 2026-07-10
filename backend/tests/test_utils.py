@@ -87,6 +87,40 @@ def test_format_docs_preserves_order():
         assert f"- doc{i}.pdf" in sources
 
 
+def test_format_docs_uses_rerank_scores_when_provided():
+    """Scores passed in are paired by index and override metadata['score']."""
+    docs = [
+        MockDocument("First", {"source": "doc1.pdf", "score": 0.0}),
+        MockDocument("Second", {"source": "doc2.pdf"}),
+    ]
+
+    _, _, sources_json = format_docs(docs, scores=[0.87, 0.42])
+
+    assert sources_json[0]["score"] == 0.87
+    assert sources_json[1]["score"] == 0.42
+
+
+def test_format_docs_falls_back_to_metadata_score_without_scores_arg():
+    """Without an explicit `scores` list, metadata['score'] (default 0.0) is used."""
+    doc = MockDocument("Content", {"source": "doc.pdf"})
+    _, _, sources_json = format_docs([doc])
+
+    assert sources_json[0]["score"] == 0.0
+
+
+def test_format_docs_scores_shorter_than_docs_falls_back_per_missing_entry():
+    """A `scores` list shorter than `docs` doesn't raise - missing entries fall back."""
+    docs = [
+        MockDocument("First", {"source": "doc1.pdf"}),
+        MockDocument("Second", {"source": "doc2.pdf"}),
+    ]
+
+    _, _, sources_json = format_docs(docs, scores=[0.9])
+
+    assert sources_json[0]["score"] == 0.9
+    assert sources_json[1]["score"] == 0.0
+
+
 class TestFormatDocsEdgeCases:
     """Edge cases for `format_docs` input handling."""
     
