@@ -34,7 +34,7 @@ structure and component boundaries, not for visual style.
 | Auth / API key | Skipped. No secret env vars in the frontend build. Public backend URL only |
 | Frontend deploy | Vercel static build. `VITE_API_BASE_URL` points to Azure backend |
 | Backend deploy | New container (backend-only, no Streamlit) on Azure Container Apps |
-| CORS | `INVENIOAI_CORS_ORIGINS` restricted to the Vercel domain |
+| CORS | `INVENIOAI_ALLOWED_ORIGINS` restricted to the Vercel domain (middleware already exists in `main.py`) |
 | Old Streamlit HF Space | Left idle as an archived demo, not maintained |
 | Repo strategy | Single repo, feature branch, merge to `main` via PR |
 
@@ -48,8 +48,9 @@ structure and component boundaries, not for visual style.
   loading/error). SSE `/query/stream` is not native to Query, so a custom hook consumes the stream via
   `fetch` + `ReadableStream`; on completion it invalidates the relevant Query caches (documents, metrics).
 - **Local state**: chat history in React state, synced to `localStorage` under a namespaced key.
-- **Backend changes**: add `CORSMiddleware` to `main.py`, origins from `INVENIOAI_CORS_ORIGINS` env. New
-  container image variant serves FastAPI only (no Streamlit / `start.sh`).
+- **Backend changes**: `CORSMiddleware` already exists in `main.py` reading `INVENIOAI_ALLOWED_ORIGINS`; no
+  code change needed beyond setting that env at deploy. New container image variant serves FastAPI only (no
+  Streamlit / `start.sh`).
 
 ## Pages & Components
 
@@ -73,7 +74,7 @@ structure and component boundaries, not for visual style.
 - **Repo**: one repo, feature branch, merged to `main` via PR when ready.
 - **Backend**: reuse the `Dockerfile` pattern, backend-only (no Streamlit), deployed to Azure Container Apps
   (fits a FastAPI container that loads reranker/embedding models on startup; scale-to-zero optional for cost).
-- **CORS**: `INVENIOAI_CORS_ORIGINS` set to the Vercel domain.
+- **CORS**: `INVENIOAI_ALLOWED_ORIGINS` set to the Vercel domain.
 - **Frontend**: Vercel, `VITE_API_BASE_URL` points to the Azure backend URL.
 - **Secrets on Azure**: `GROQ_API_KEY`, `QDRANT_URL`, etc. stored as Azure Container Apps secrets, never in
   the repo.
