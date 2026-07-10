@@ -1,3 +1,5 @@
 export default function App() {
-  return <div>InvenioAI</div>;
+  return (
+    <h1 className="font-display text-3xl text-accent p-8">InvenioAI</h1>
+  );
 }
