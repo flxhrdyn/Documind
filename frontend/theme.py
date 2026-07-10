@@ -29,6 +29,7 @@ CSS_VARS = """
 :root {
     --invenio-accent: var(--primary-color);
     --invenio-bg-card: var(--secondary-bg-color);
+    --invenio-bg-secondary: var(--secondary-bg-color);
     --invenio-border: rgba(128, 128, 128, 0.2);
 }
 """

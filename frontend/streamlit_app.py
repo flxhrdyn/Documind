@@ -21,7 +21,7 @@ st.set_page_config(
 import importlib
 import theme
 importlib.reload(theme)
-from theme import COLORS, CSS_VARS
+from theme import CSS_VARS
 
 API_BASE_URL = os.getenv("INVENIOAI_API_BASE_URL", "http://localhost:8000").rstrip("/")
 
