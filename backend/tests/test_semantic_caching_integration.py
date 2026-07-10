@@ -46,7 +46,7 @@ def test_rag_pipeline_semantic_miss_saves(mock_cache_and_embeds):
     cache.get.return_value = None
     cache.get_semantic.return_value = None
     
-    real_result = {"answer": "Fresh answer", "sources": []}
+    real_result = {"answer": "Fresh answer", "sources": [], "metrics": {"docs_retrieved": 3}}
     
     with patch("app.rag_pipeline.rewrite_query", return_value="standalone query"), \
          patch("app.rag_pipeline._run_rag_pipeline_with_query", return_value=real_result):

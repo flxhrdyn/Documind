@@ -1,5 +1,6 @@
 import json
 import logging
+import threading
 from typing import Any, Optional
 
 import diskcache
@@ -9,12 +10,18 @@ from .config import BASE_DIR, CACHE_TYPE, REDIS_URL
 
 logger = logging.getLogger(__name__)
 
+_SEMANTIC_REGISTRY_KEY = "semantic_registry"
+
+
 class CacheManager:
     def __init__(self, cache_type: str = CACHE_TYPE, redis_url: str = REDIS_URL):
         self.cache_type = cache_type
         self.redis_client = None
         self.disk_cache = None
-        
+        # Guards the semantic registry read-modify-write cycle so concurrent
+        # requests don't clobber each other's additions.
+        self._semantic_lock = threading.Lock()
+
         if self.cache_type == "redis":
             try:
                 self.redis_client = redis.Redis.from_url(redis_url, decode_responses=True)
@@ -54,6 +61,20 @@ class CacheManager:
         except Exception as e:
             logger.warning(f"Cache set failed for key {key}: {e}")
 
+    def _load_semantic_registry(self) -> list[dict[str, Any]]:
+        if self.cache_type == "redis" and self.redis_client:
+            raw = self.redis_client.get(_SEMANTIC_REGISTRY_KEY)
+            return json.loads(raw) if raw else []
+        elif self.cache_type == "diskcache" and self.disk_cache is not None:
+            return self.disk_cache.get(_SEMANTIC_REGISTRY_KEY, [])
+        return []
+
+    def _save_semantic_registry(self, registry: list[dict[str, Any]]) -> None:
+        if self.cache_type == "redis" and self.redis_client:
+            self.redis_client.set(_SEMANTIC_REGISTRY_KEY, json.dumps(registry))
+        elif self.cache_type == "diskcache" and self.disk_cache is not None:
+            self.disk_cache.set(_SEMANTIC_REGISTRY_KEY, registry)
+
     def get_semantic(
         self,
         query_embedding: list[float],
@@ -62,15 +83,20 @@ class CacheManager:
     ) -> Optional[str]:
         """Find a similar query in the semantic registry and return its cache key.
 
+        Works for both diskcache and Redis backends: the registry is a JSON list
+        of {vector, key, query} entries stored under one key and scanned linearly.
+
         Includes a number/year guard: if the incoming query and the cached query
         differ in ANY numeric token (e.g. '2022' vs '2023', '15,433' vs '16,136'),
         the cache hit is rejected even when cosine similarity exceeds the threshold.
         This prevents year-shifted queries from returning stale cached answers.
         """
-        if self.cache_type != "diskcache" or self.disk_cache is None:
+        try:
+            with self._semantic_lock:
+                registry = self._load_semantic_registry()
+        except Exception as e:
+            logger.warning(f"Failed to load semantic registry: {e}")
             return None
-
-        registry = self.disk_cache.get("semantic_registry", [])
         if not registry:
             return None
 
@@ -126,20 +152,25 @@ class CacheManager:
         
         Stores the original query text alongside the vector so the number/year
         guard in get_semantic() can reject false-positive cache hits.
-        """
-        if self.cache_type != "diskcache" or self.disk_cache is None:
-            return
 
-        registry = self.disk_cache.get("semantic_registry", [])
-        registry.append({
-            "vector": query_embedding,
-            "key": cache_key,
-            "query": query_text or "",
-        })
-        # Keep registry size manageable for linear scan (last 1000 items)
-        if len(registry) > 1000:
-            registry = registry[-1000:]
-        self.disk_cache.set("semantic_registry", registry)
+        Works for both diskcache and Redis backends. The read-modify-write is
+        guarded by a lock to avoid concurrent requests overwriting each other's
+        additions.
+        """
+        try:
+            with self._semantic_lock:
+                registry = self._load_semantic_registry()
+                registry.append({
+                    "vector": query_embedding,
+                    "key": cache_key,
+                    "query": query_text or "",
+                })
+                # Keep registry size manageable for linear scan (last 1000 items)
+                if len(registry) > 1000:
+                    registry = registry[-1000:]
+                self._save_semantic_registry(registry)
+        except Exception as e:
+            logger.warning(f"Failed to update semantic registry: {e}")
 
     def clear(self) -> None:
         """Wipe the entire cache and semantic registry."""

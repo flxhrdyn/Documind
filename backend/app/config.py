@@ -107,15 +107,22 @@ PRELOAD_EMBEDDINGS_ON_STARTUP = _env_bool("INVENIOAI_PRELOAD_EMBEDDINGS", defaul
 RETRIEVAL_K = 20
 
 # Hybrid retrieval (dense + sparse/lexical) settings.
-# Hybrid uses weighted reciprocal-rank fusion (RRF) or weighted fusion in Qdrant.
+# Hybrid uses Qdrant's native server-side RRF fusion (dense + sparse/BM42).
 # Set INVENIOAI_ENABLE_HYBRID_SEARCH=0 to force dense-only.
+# Note: langchain-qdrant's QdrantVectorStore doesn't expose fusion weight
+# knobs, so there is no dense/sparse weight setting here - RRF fusion order
+# is the only lever available through this library.
 USE_HYBRID_SEARCH = _env_bool("INVENIOAI_ENABLE_HYBRID_SEARCH", default="1")
 SPARSE_MODEL_NAME = _env_str("INVENIOAI_SPARSE_MODEL_NAME", "Qdrant/bm42-all-minilm-l6-v2-attentions")
-HYBRID_DENSE_WEIGHT = _env_float("INVENIOAI_HYBRID_DENSE_WEIGHT", default=0.5, min_value=0.0)
-HYBRID_SPARSE_WEIGHT = _env_float("INVENIOAI_HYBRID_SPARSE_WEIGHT", default=0.5, min_value=0.0)
 
 # Reranking
 RERANK_TOP_K = 7
+
+# IR quality metrics (precision/recall/MRR/hit-rate in the analytics dashboard)
+# treat a reranker score >= this threshold as "relevant". This assumes the
+# active RERANKER_MODEL's scores are roughly normalized to [0, 1] - if you
+# swap reranker models, verify their score distribution and recalibrate this.
+IR_RELEVANCE_THRESHOLD = _env_float("INVENIOAI_IR_RELEVANCE_THRESHOLD", default=0.7, min_value=0.0)
 
 # Models
 LLM_MODEL = _env_str("INVENIOAI_LLM_MODEL", "llama-3.1-8b-instant")
@@ -125,6 +132,22 @@ RERANKER_MODEL = _env_str("INVENIOAI_RERANKER_MODEL", "ms-marco-MiniLM-L-12-v2")
 # API Keys
 _groq_api_key = (os.getenv("GROQ_API_KEY") or "").strip()
 GROQ_API_KEY = _groq_api_key or None
+
+# Optional API key. When set, protected endpoints (upload, query, document
+# management, metrics) require a matching `X-API-Key` header. Leave unset for
+# local/demo use (auth disabled) - this preserves today's default behavior.
+_api_key = (os.getenv("INVENIOAI_API_KEY") or "").strip()
+API_KEY = _api_key or None
+
+# Max accepted upload size in megabytes (server-side; independent of any
+# client-side limit like Streamlit's own uploader cap).
+MAX_UPLOAD_SIZE_MB = _env_int("INVENIOAI_MAX_UPLOAD_SIZE_MB", default=100, min_value=1)
+
+# CORS: comma-separated list of allowed origins for browser clients (e.g. a
+# future React frontend). Defaults to "*" since the bundled Streamlit
+# frontend talks to this API server-side (no browser CORS involved).
+_allowed_origins_raw = (os.getenv("INVENIOAI_ALLOWED_ORIGINS") or "*").strip()
+ALLOWED_ORIGINS = [o.strip() for o in _allowed_origins_raw.split(",") if o.strip()]
 
 # Caching
 CACHE_TYPE = _env_str("CACHE_TYPE", "diskcache") # 'redis' or 'diskcache'

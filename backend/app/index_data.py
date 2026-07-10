@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 import uuid
 from pathlib import Path
@@ -12,6 +13,7 @@ from qdrant_client import models
 from qdrant_client.http.models import Distance, VectorParams, SparseVectorParams
 
 from .config import (
+    EMBEDDING_MODEL,
     INDEXING_BATCH_SIZE,
     CHUNK_OVERLAP,
     CHUNK_SIZE,
@@ -109,6 +111,26 @@ def strip_running_headers_footers(llama_docs: list) -> list:
     return llama_docs
 
 
+_TABLE_SEPARATOR_ROW_RE = re.compile(r'^\|?[\s\-:|]+\|?$')
+
+
+def _find_table_header(text: str) -> str | None:
+    """Return the "| col | col |" + "|---|---|" header block of the first
+    markdown table found in `text`, or None if there isn't one.
+
+    Used to re-attach a table's header row to any later chunk that starts
+    mid-table, so `RecursiveCharacterTextSplitter` splitting a table larger
+    than `CHUNK_SIZE` doesn't leave data rows with no column labels.
+    """
+    lines = text.split("\n")
+    for i in range(len(lines) - 1):
+        header_line = lines[i].strip()
+        separator_line = lines[i + 1].strip()
+        if header_line.startswith("|") and _TABLE_SEPARATOR_ROW_RE.match(separator_line):
+            return f"{lines[i]}\n{lines[i + 1]}"
+    return None
+
+
 def process_pdf_documents(
     file_path: str, 
     status_callback: Optional[Callable[[str], None]] = None
@@ -196,6 +218,13 @@ def process_pdf_documents(
                 "page_label": page_num,
                 "file_name": path.name
             })
+
+            # Remember this section's table header (if any) so a later chunk
+            # that gets split mid-table can have it re-attached.
+            table_header = _find_table_header(split.page_content)
+            if table_header:
+                split.metadata["_table_header"] = table_header
+
             all_header_splits.append(split)
     
     # 4. Semantic/Length-based Splitting (Step 2)
@@ -219,35 +248,99 @@ def process_pdf_documents(
     )
     
     final_chunks = text_splitter.split_documents(all_header_splits)
-    
+
+    # Re-attach the table header to any chunk that starts mid-table (i.e. the
+    # RecursiveCharacterTextSplitter had to fall back to the "\n| " separator
+    # because the table exceeded CHUNK_SIZE) so rows never end up orphaned
+    # from their column labels.
+    for chunk in final_chunks:
+        table_header = chunk.metadata.pop("_table_header", None)
+        if (
+            table_header
+            and chunk.page_content.lstrip().startswith("|")
+            and not chunk.page_content.startswith(table_header)
+        ):
+            chunk.page_content = f"{table_header}\n{chunk.page_content}"
+
     # Final metadata normalization (Ensure 'Header 1' etc are consistent)
     for chunk in final_chunks:
         # Ensure we don't have None values in metadata which can break Qdrant
         for k, v in list(chunk.metadata.items()):
             if v is None:
                 chunk.metadata[k] = ""
-                
+
     return final_chunks
 
 
+_COLLECTION_META_POINT_ID = "00000000-0000-0000-0000-000000000001"
+
+
+def _check_or_record_embedding_model(client, embeddings, sparse_embeddings_model) -> None:
+    """Guard against silently mixing incompatible embedding spaces.
+
+    Stores the active embedding model name in a fixed marker point the first
+    time a collection is created. On every later index, compares the stored
+    model against the currently configured one and raises if they differ -
+    otherwise old and new vectors would coexist in the same collection despite
+    being incomparable, quietly corrupting retrieval quality.
+    """
+    try:
+        points = client.retrieve(
+            collection_name=QDRANT_COLLECTION,
+            ids=[_COLLECTION_META_POINT_ID],
+            with_payload=True,
+        )
+    except Exception:
+        points = []
+
+    if points:
+        stored_model = (points[0].payload or {}).get("embedding_model")
+        if stored_model and stored_model != EMBEDDING_MODEL:
+            raise ValueError(
+                f"Model embedding aktif ('{EMBEDDING_MODEL}') berbeda dari model yang dipakai saat "
+                f"koleksi ini pertama kali dibuat ('{stored_model}'). Kosongkan knowledge base (hapus "
+                "semua dokumen) sebelum mengganti INVENIOAI_EMBEDDING_MODEL, atau kembalikan ke model "
+                "semula."
+            )
+        return
+
+    marker_text = "__invenioai_collection_meta__"
+    vector = embeddings.embed_query(marker_text)
+    sparse_vector = sparse_embeddings_model.embed_query(marker_text)
+    client.upsert(
+        collection_name=QDRANT_COLLECTION,
+        points=[
+            models.PointStruct(
+                id=_COLLECTION_META_POINT_ID,
+                vector={
+                    "": vector,
+                    "sparse": models.SparseVector(
+                        indices=sparse_vector.indices, values=sparse_vector.values
+                    ),
+                },
+                payload={"__meta__": True, "embedding_model": EMBEDDING_MODEL},
+            )
+        ],
+    )
+
+
 def index_documents(
-    file_path: str, 
+    file_path: str,
+    content_hash: Optional[str] = None,
     status_callback: Optional[Callable[[str], None]] = None
 ) -> None:
-    """Index a single PDF into Qdrant using the semantic pipeline."""
+    """Index a single PDF into Qdrant using the semantic pipeline.
+
+    `content_hash` (sha256 of the raw file bytes, if provided) is stored on
+    every chunk's metadata so callers can detect re-uploads of identical
+    content before indexing (see `index_api._find_duplicate_document`).
+    """
     path = Path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
 
     total_start = time.monotonic()
     logger.info("Indexing PDF: %s", path.name)
-
-    # Process (Load + Semantic Chunk)
-    chunks = process_pdf_documents(file_path, status_callback=status_callback)
-    logger.info("Created %d semantic chunks", len(chunks))
-
-    if status_callback:
-        status_callback("indexing")
 
     # Initialize Qdrant Collection
     client = get_qdrant_client()
@@ -267,42 +360,82 @@ def index_documents(
             }
         )
 
-    # Batch Indexing
-    for i in range(0, len(chunks), INDEXING_BATCH_SIZE):
-        batch = chunks[i : i + INDEXING_BATCH_SIZE]
-        texts = [c.page_content for c in batch]
-        metadatas = [c.metadata for c in batch]
+    # Fail fast (before spending LlamaParse credits on parsing) if the active
+    # embedding model doesn't match what this collection was built with.
+    _check_or_record_embedding_model(client, embeddings, sparse_embeddings_model)
 
-        # Generate Dense Embeddings
-        vectors = embeddings.embed_documents(texts)
-        
-        # Generate Sparse Embeddings
-        sparse_vectors = sparse_embeddings_model.embed_documents(texts)
+    # Process (Load + Semantic Chunk)
+    chunks = process_pdf_documents(file_path, status_callback=status_callback)
+    logger.info("Created %d semantic chunks", len(chunks))
 
-        points = []
-        for j, (text, meta, vector, sparse_vector) in enumerate(zip(texts, metadatas, vectors, sparse_vectors)):
-            points.append(
-                models.PointStruct(
-                    id=str(uuid.uuid4()),
-                    vector={
-                        "": vector, # Unnamed dense vector
-                        "sparse": models.SparseVector(
-                            indices=sparse_vector.indices, 
-                            values=sparse_vector.values
-                        )
-                    },
-                    payload={
-                        "page_content": text,
-                        "metadata": meta,
-                    },
+    if content_hash:
+        for chunk in chunks:
+            chunk.metadata["content_hash"] = content_hash
+
+    if status_callback:
+        status_callback("indexing")
+
+    # Batch Indexing. If a batch fails partway through, roll back the batches
+    # already upserted for this document instead of leaving it half-indexed.
+    try:
+        for i in range(0, len(chunks), INDEXING_BATCH_SIZE):
+            batch = chunks[i : i + INDEXING_BATCH_SIZE]
+            texts = [c.page_content for c in batch]
+            metadatas = [c.metadata for c in batch]
+
+            # Generate Dense Embeddings
+            vectors = embeddings.embed_documents(texts)
+
+            # Generate Sparse Embeddings
+            sparse_vectors = sparse_embeddings_model.embed_documents(texts)
+
+            points = []
+            for j, (text, meta, vector, sparse_vector) in enumerate(zip(texts, metadatas, vectors, sparse_vectors)):
+                points.append(
+                    models.PointStruct(
+                        id=str(uuid.uuid4()),
+                        vector={
+                            "": vector, # Unnamed dense vector
+                            "sparse": models.SparseVector(
+                                indices=sparse_vector.indices,
+                                values=sparse_vector.values
+                            )
+                        },
+                        payload={
+                            "page_content": text,
+                            "metadata": meta,
+                        },
+                    )
                 )
-            )
 
-        client.upsert(
-            collection_name=QDRANT_COLLECTION,
-            points=points
-        )
-        logger.info("Indexed batch %d/%d", i + len(batch), len(chunks))
+            client.upsert(
+                collection_name=QDRANT_COLLECTION,
+                points=points
+            )
+            logger.info("Indexed batch %d/%d", i + len(batch), len(chunks))
+    except Exception:
+        logger.exception("Indexing failed partway through %s; rolling back partial points", path.name)
+        try:
+            client.delete(
+                collection_name=QDRANT_COLLECTION,
+                points_selector=models.FilterSelector(
+                    filter=models.Filter(
+                        should=[
+                            models.FieldCondition(
+                                key="metadata.source_file",
+                                match=models.MatchValue(value=path.name),
+                            ),
+                            models.FieldCondition(
+                                key="metadata.source",
+                                match=models.MatchValue(value=file_path),
+                            ),
+                        ]
+                    )
+                ),
+            )
+        except Exception:
+            logger.exception("Rollback delete also failed for %s; index may be left partially populated", path.name)
+        raise
 
     total_time = time.monotonic() - total_start
     logger.info("Indexing complete for %s (Time: %.2fs)", path.name, total_time)

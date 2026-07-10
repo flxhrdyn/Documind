@@ -7,21 +7,19 @@ strategy). The RAG pipeline can then focus on orchestration and metrics.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Tuple
+import threading
+from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.documents import Document
 from langchain_core.prompts import PromptTemplate
 from langchain_classic.retrievers.multi_query import MultiQueryRetriever
-from langchain_groq import ChatGroq
 from langchain_qdrant import QdrantVectorStore, RetrievalMode
 from qdrant_client import QdrantClient
 
 from .embeddings import get_embeddings, get_sparse_embeddings
+from .llm import get_llm
 from .config import (
     GROQ_API_KEY,
-    HYBRID_DENSE_WEIGHT,
-    HYBRID_SPARSE_WEIGHT,
-    LLM_MODEL,
     NUM_FUSION_QUERIES,
     QDRANT_COLLECTION,
     RETRIEVAL_K,
@@ -35,24 +33,49 @@ logger = logging.getLogger(__name__)
 # Default to quieter logs; let the application configure logging if needed.
 logging.getLogger("langchain.retrievers.multi_query").setLevel(logging.WARNING)
 
+_RetrieverStack = Tuple[MultiQueryRetriever, QdrantVectorStore, QdrantClient]
+_retriever_cache: Optional[_RetrieverStack] = None
+_retriever_cache_lock = threading.Lock()
 
-def build_retriever() -> Tuple[MultiQueryRetriever, QdrantVectorStore, QdrantClient]:
+
+def invalidate_retriever_cache() -> None:
+    """Drop the cached retriever stack.
+
+    Call this whenever the indexed knowledge base changes (upload/delete/clear)
+    so the next query re-validates that the collection still exists.
+    """
+    global _retriever_cache
+    with _retriever_cache_lock:
+        _retriever_cache = None
+
+
+def build_retriever() -> _RetrieverStack:
     """Build and validate the retriever stack.
 
     Returns a tuple of (retriever, vectorstore, client). Raises a ValueError if
     the API key is missing or the expected Qdrant collection does not exist.
+
+    The stack is cached process-wide: rebuilding a `ChatGroq` client and
+    re-validating collection existence on every query added avoidable latency.
+    The cache is invalidated by `invalidate_retriever_cache()` (document
+    changes) and automatically when the underlying Qdrant client instance is
+    swapped out (e.g. after a "client closed" recovery).
     """
     if not GROQ_API_KEY:
         raise ValueError(
             "GROQ_API_KEY belum di-set. Isi di .env (lihat .env.example) sebelum menjalankan query."
         )
 
+    client = get_qdrant_client()
+
+    global _retriever_cache
+    with _retriever_cache_lock:
+        if _retriever_cache is not None and _retriever_cache[2] is client:
+            return _retriever_cache
+
     # Embedding models (cached)
     embeddings = get_embeddings()
     sparse_embeddings = get_sparse_embeddings()
-
-    # Shared Qdrant client (avoids local storage lock issues)
-    client = get_qdrant_client()
 
     # Guard: ensure the collection exists before serving queries.
     existing = [c.name for c in client.get_collections().collections]
@@ -88,20 +111,13 @@ def build_retriever() -> Tuple[MultiQueryRetriever, QdrantVectorStore, QdrantCli
     search_kwargs: Dict[str, Any] = {
         "k": RETRIEVAL_K,
     }
-    
+
     base_retriever = vectorstore.as_retriever(
         search_type="mmr" if not USE_HYBRID_SEARCH else "similarity", # MMR might not be fully compatible with hybrid yet in all versions
         search_kwargs=search_kwargs
     )
 
-    # Groq LLM
-    llm = ChatGroq(
-        model=LLM_MODEL,
-        groq_api_key=GROQ_API_KEY,
-        temperature=0
-    )
-
-    # MultiQuery Retriever
+    # MultiQuery Retriever (reuses the shared Groq LLM singleton)
     prompt = PromptTemplate(
         input_variables=["question"],
         template=f"You are an AI language model assistant. Your task is to generate {NUM_FUSION_QUERIES} different versions of the given user question to retrieve relevant documents from a vector database. By generating multiple perspectives on the user question, your goal is to help the user overcome some of the limitations of distance-based similarity search. Provide these alternative questions separated by newlines. Original question: {{question}}"
@@ -109,13 +125,17 @@ def build_retriever() -> Tuple[MultiQueryRetriever, QdrantVectorStore, QdrantCli
 
     retriever = MultiQueryRetriever.from_llm(
         retriever=base_retriever,
-        llm=llm,
+        llm=get_llm(),
         prompt=prompt
     )
 
-    logger.debug("Retriever ready (collection=%s, k=%s, mode=%s)", 
+    logger.debug("Retriever ready (collection=%s, k=%s, mode=%s)",
                  QDRANT_COLLECTION, RETRIEVAL_K, "hybrid" if USE_HYBRID_SEARCH else "dense")
-    return retriever, vectorstore, client
+
+    stack = (retriever, vectorstore, client)
+    with _retriever_cache_lock:
+        _retriever_cache = stack
+    return stack
 
 
 def retrieve_documents(

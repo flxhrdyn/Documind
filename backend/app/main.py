@@ -15,14 +15,15 @@ import uuid
 from typing import Any, Dict, List, Literal, Optional
 from contextlib import asynccontextmanager
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from .auth import require_api_key
 from .embeddings import get_embeddings, get_sparse_embeddings
 from .index_api import router as index_router
-from .config import PRELOAD_EMBEDDINGS_ON_STARTUP
+from .config import ALLOWED_ORIGINS, PRELOAD_EMBEDDINGS_ON_STARTUP
 from .rag_pipeline import rag_pipeline
 from .qdrant_conn import close_qdrant_client, get_qdrant_client
 from .reranker import preload_reranker
@@ -127,12 +128,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="InvenioAI API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=ALLOWED_ORIGINS,
+    # Wildcard origins and credentialed requests are mutually exclusive per the
+    # CORS spec; only allow credentials once specific origins are configured.
+    allow_credentials="*" not in ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.include_router(index_router)
+app.include_router(index_router, dependencies=[Depends(require_api_key)])
 
 
 
@@ -142,7 +145,7 @@ class Query(BaseModel):
     history: List[str] = Field(default_factory=list)
 
 
-@app.post("/query")
+@app.post("/query", dependencies=[Depends(require_api_key)])
 def query(q: Query) -> Dict[str, Any]:
     try:
         result = rag_pipeline(q.question, q.history)
@@ -158,7 +161,7 @@ def query(q: Query) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
 
-@app.post("/query/stream", tags=["query"])
+@app.post("/query/stream", tags=["query"], dependencies=[Depends(require_api_key)])
 async def query_stream_endpoint(request: Query):
     """Execute a query and stream the response using Server-Sent Events (SSE)."""
     
@@ -177,7 +180,7 @@ async def query_stream_endpoint(request: Query):
     )
 
 
-@app.post("/metrics/sync", tags=["analytics"])
+@app.post("/metrics/sync", tags=["analytics"], dependencies=[Depends(require_api_key)])
 async def sync_metrics_endpoint():
     """Manually trigger a sync of indexed document counts from Qdrant."""
     try:
@@ -227,7 +230,7 @@ async def sync_metrics_endpoint():
         return {"status": "error", "message": str(e)}
 
 
-@app.get("/metrics", tags=["analytics"])
+@app.get("/metrics", tags=["analytics"], dependencies=[Depends(require_api_key)])
 def get_metrics() -> Dict[str, Any]:
     """Return aggregate RAG performance and quality metrics."""
     metrics = load_metrics()

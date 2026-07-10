@@ -12,8 +12,6 @@ from app.config import (
     RERANK_TOP_K,
     USE_HYBRID_SEARCH,
     SPARSE_MODEL_NAME,
-    HYBRID_DENSE_WEIGHT,
-    HYBRID_SPARSE_WEIGHT,
     LLM_MODEL,
     EMBEDDING_MODEL,
     NUM_FUSION_QUERIES
@@ -56,12 +54,7 @@ def test_hybrid_retrieval_parameters():
     """Hybrid retrieval settings are well-formed."""
     assert isinstance(USE_HYBRID_SEARCH, bool)
     assert isinstance(SPARSE_MODEL_NAME, str)
-    assert isinstance(HYBRID_DENSE_WEIGHT, float)
-    assert isinstance(HYBRID_SPARSE_WEIGHT, float)
-
     assert len(SPARSE_MODEL_NAME) > 0
-    assert HYBRID_DENSE_WEIGHT >= 0
-    assert HYBRID_SPARSE_WEIGHT >= 0
 
 
 def test_model_names():

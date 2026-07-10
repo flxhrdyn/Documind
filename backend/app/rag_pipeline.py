@@ -9,14 +9,12 @@ from __future__ import annotations
 
 import logging
 import time
-from functools import lru_cache
 import hashlib
 from .cache_manager import CacheManager
 from typing import Any
 
-from langchain_groq import ChatGroq
-
-from .config import GROQ_API_KEY, LLM_MODEL, RETRIEVAL_K
+from .config import RETRIEVAL_K
+from .llm import get_llm as _get_llm
 from .qdrant_conn import close_qdrant_client, is_qdrant_client_closed_error
 from .reranker import rerank
 from .retriever import build_retriever, retrieve_documents, retrieve_documents_async
@@ -104,19 +102,6 @@ Sources:
 """
 
 
-@lru_cache(maxsize=1)
-def _get_llm() -> ChatGroq:
-    if not GROQ_API_KEY:
-        raise ValueError(
-            "GROQ_API_KEY belum di-set. Isi di .env (lihat .env.example) sebelum menjalankan query."
-        )
-
-    return ChatGroq(
-        model=LLM_MODEL,
-        groq_api_key=GROQ_API_KEY,
-        temperature=0,
-    )
-
 _cache_manager: CacheManager | None = None
 
 def get_cache_manager() -> CacheManager:
@@ -150,14 +135,16 @@ def rewrite_query(question: str, history: Any) -> str:
     # Check if we have a cached standalone version for this question + simplified history
     # For standalone questions (empty history), we can cache the result long-term
     cache = get_cache_manager()
-    hist_str = format_history(history, max_items=1) # Just a hint
-    rewrite_cache_key = f"rewrite_cache:{hashlib.md5(f'{question}:{hist_str}'.encode()).hexdigest()}"
-    
+    history_text = format_history(history)
+    # Key must hash the same history text used to generate the rewrite, or two
+    # conversations with the same latest message but different earlier turns
+    # collide and serve each other's cached standalone query.
+    rewrite_cache_key = f"rewrite_cache:{hashlib.md5(f'{question}:{history_text}'.encode()).hexdigest()}"
+
     cached_rewrite = cache.get(rewrite_cache_key)
     if cached_rewrite:
         return cached_rewrite
 
-    history_text = format_history(history)
     prompt = QUERY_REWRITE_PROMPT.format(
         history=history_text,
         question=question,
@@ -176,14 +163,13 @@ def rewrite_query(question: str, history: Any) -> str:
 async def rewrite_query_async(query: str, history: list[str]) -> str:
     """Rewrite query to make it standalone using context asynchronously with caching."""
     cache = get_cache_manager()
-    hist_str = format_history(history, max_items=1)
-    rewrite_cache_key = f"rewrite_cache:{hashlib.md5(f'{query}:{hist_str}'.encode()).hexdigest()}"
-    
+    history_text = format_history(history)
+    rewrite_cache_key = f"rewrite_cache:{hashlib.md5(f'{query}:{history_text}'.encode()).hexdigest()}"
+
     cached_rewrite = cache.get(rewrite_cache_key)
     if cached_rewrite:
         return cached_rewrite
 
-    history_text = format_history(history)
     prompt = QUERY_REWRITE_PROMPT.format(question=query, history=history_text)
 
     try:
@@ -290,10 +276,13 @@ def rag_pipeline(question: str, history: Any) -> dict[str, Any]:
                 return cached_deep
 
             result = _run_rag_pipeline_with_query(standalone_query, question, history)
-            cache.set(deep_key, result, ttl=3600)
-            cache.set(quick_key, result, ttl=3600)
-            # Store in semantic cache
-            cache.add_semantic(query_embedding, deep_key, query_text=standalone_query)
+            # Don't cache "nothing relevant found" - retrieval may succeed once
+            # more documents are indexed later (mirrors the streaming path,
+            # which also skips caching on empty retrieval).
+            if result.get("metrics", {}).get("docs_retrieved", 0) > 0:
+                cache.set(deep_key, result, ttl=3600)
+                cache.set(quick_key, result, ttl=3600)
+                cache.add_semantic(query_embedding, deep_key, query_text=standalone_query)
             return result
         except Exception as exc:
             if attempt < (max_attempts - 1) and is_qdrant_client_closed_error(exc):
@@ -315,6 +304,36 @@ def _run_rag_pipeline_with_query(standalone_query: str, original_question: str, 
         dense_retriever=retriever,
         client=client,
     )
+
+    if not retrieved_docs:
+        retrieval_time = time.monotonic() - retrieval_start
+        total_time = time.monotonic() - total_start
+        res = {
+            "answer": "Maaf, tidak ditemukan informasi relevan.",
+            "thoughts": "",
+            "sources": [],
+            "metrics": {
+                "total_time": round(total_time, 2),
+                "retrieval_time": round(retrieval_time, 2),
+                "generation_time": 0,
+                "docs_retrieved": 0,
+                "chunks_processed": 0,
+                "retrieval_scores": [],
+            },
+        }
+        try:
+            log_query(
+                question=original_question,
+                response_time=total_time,
+                retrieval_time=retrieval_time,
+                generation_time=0,
+                docs_retrieved=0,
+                chunks_processed=0,
+                standalone_query=standalone_query,
+            )
+        except Exception:
+            logger.warning("Failed to log empty-retrieval query metrics", exc_info=True)
+        return res
 
     reranked_docs, retrieval_scores = rerank(standalone_query, retrieved_docs)
     retrieval_time = time.monotonic() - retrieval_start
@@ -506,7 +525,10 @@ async def rag_pipeline_stream_async(query: str, chat_history: list[str]):
 
         yield json.dumps({"step": "generating"}) + "\n"
         context_text, sources_str, sources_json = format_docs(top_docs)
-        prompt = RAG_PROMPT.format(context=context_text, question=standalone_query, sources=sources_str)
+        # Use the user's original wording (not the rewritten standalone query) so
+        # the answer matches the language/tone the user actually typed - the sync
+        # path already does this via `original_question`.
+        prompt = RAG_PROMPT.format(context=context_text, question=query, sources=sources_str)
         
         llm = _get_llm()
         generation_start = time.monotonic()
