@@ -33,7 +33,11 @@ export default function UploadPanel() {
         type="file"
         accept="application/pdf"
         className="hidden"
-        onChange={(e) => onFile(e.target.files?.[0])}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = '';
+          onFile(file);
+        }}
       />
       {error && <p className="text-xs text-accent mt-2">{error}</p>}
     </div>

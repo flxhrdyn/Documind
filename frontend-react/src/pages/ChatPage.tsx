@@ -7,9 +7,7 @@ export default function ChatPage() {
   const { messages, isGenerating, send } = useChat();
   const { data } = useDocuments();
 
-  const lastAssistant = [...messages].reverse().find(
-    (m) => m.role === 'assistant' && m.sources && m.sources.length > 0,
-  );
+  const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant');
 
   return (
     <div className="flex h-screen">

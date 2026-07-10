@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { API_BASE_URL, formatError } from '../lib/apiClient';
+import { API_BASE_URL, apiFetch, formatError } from '../lib/apiClient';
 import type { UploadJob } from '../types';
 
 export function nextPollInterval(current: number): number {
@@ -19,10 +19,8 @@ async function createUploadJob(file: File): Promise<string> {
   return String(body.job_id);
 }
 
-async function fetchJob(jobId: string): Promise<UploadJob> {
-  const res = await fetch(`${API_BASE_URL}/upload/jobs/${jobId}`);
-  if (!res.ok) throw new Error(`Job status failed (${res.status})`);
-  return res.json();
+function fetchJob(jobId: string): Promise<UploadJob> {
+  return apiFetch<UploadJob>(`/upload/jobs/${jobId}`);
 }
 
 export function useUploadJob() {

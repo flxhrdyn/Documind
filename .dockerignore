@@ -21,8 +21,12 @@ htmlcov
 
 uploaded_docs/*
 !uploaded_docs/.gitkeep
+backend/uploaded_docs/*
+!backend/uploaded_docs/.gitkeep
 qdrant_storage
+backend/qdrant_storage
 metrics.json
+backend/metrics.json
 
 .vscode
 .idea
