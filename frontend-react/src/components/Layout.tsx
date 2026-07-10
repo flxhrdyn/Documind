@@ -1,5 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { MessageSquare, BarChart3 } from 'lucide-react';
+import Sidebar from './Sidebar';
+import ThemeToggle from './ThemeToggle';
 
 const navClass = ({ isActive }: { isActive: boolean }) =>
   `flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -8,11 +10,14 @@ const navClass = ({ isActive }: { isActive: boolean }) =>
 
 export default function Layout() {
   return (
-    <div className="min-h-screen flex bg-cream text-charcoal">
+    <div className="min-h-screen flex bg-cream text-charcoal dark:bg-charcoal dark:text-cream">
       <aside className="w-80 shrink-0 border-r border-line bg-cream-card flex flex-col p-5 gap-6">
-        <div>
-          <h1 className="font-display text-2xl font-bold text-accent">InvenioAI</h1>
-          <p className="text-xs text-charcoal-muted">Document Intelligence</p>
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="font-display text-2xl font-bold text-accent">InvenioAI</h1>
+            <p className="text-xs text-charcoal-muted">Document Intelligence</p>
+          </div>
+          <ThemeToggle />
         </div>
         <nav className="flex flex-col gap-1">
           <NavLink to="/chat" className={navClass}>
@@ -22,7 +27,9 @@ export default function Layout() {
             <BarChart3 className="w-4 h-4" /> Analytics
           </NavLink>
         </nav>
-        <div id="sidebar-slot" className="flex-1 min-h-0 overflow-y-auto" />
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <Sidebar />
+        </div>
       </aside>
       <main className="flex-1 min-w-0 flex flex-col">
         <Outlet />
