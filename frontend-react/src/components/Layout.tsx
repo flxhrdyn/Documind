@@ -4,18 +4,25 @@ import Sidebar from './Sidebar';
 import ThemeToggle from './ThemeToggle';
 
 const navClass = ({ isActive }: { isActive: boolean }) =>
-  `flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-    isActive ? 'bg-accent text-accent-fg' : 'text-charcoal-muted hover:bg-cream-muted'
+  `flex items-center gap-2.5 px-3.5 py-2 rounded-lg text-sm font-medium transition-colors ${
+    isActive
+      ? 'bg-accent text-accent-fg'
+      : 'text-ink-muted hover:bg-surface hover:text-ink'
   }`;
 
 export default function Layout() {
   return (
-    <div className="min-h-screen flex bg-cream text-charcoal dark:bg-charcoal dark:text-cream">
-      <aside className="w-80 shrink-0 border-r border-line bg-cream-card flex flex-col p-5 gap-6">
-        <div className="flex items-start justify-between">
-          <div>
-            <h1 className="font-display text-2xl font-bold text-accent">InvenioAI</h1>
-            <p className="text-xs text-charcoal-muted">Document Intelligence</p>
+    <div className="min-h-screen flex bg-bg text-ink">
+      <aside className="w-72 shrink-0 border-r border-line bg-surface-2 flex flex-col p-4 gap-6">
+        <div className="flex items-center justify-between px-1">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center text-accent-fg font-bold text-base shrink-0">
+              I
+            </div>
+            <div className="leading-tight">
+              <h1 className="font-bold text-sm tracking-tight">InvenioAI</h1>
+              <p className="text-[11px] text-ink-muted">Document Intelligence</p>
+            </div>
           </div>
           <ThemeToggle />
         </div>
@@ -31,7 +38,7 @@ export default function Layout() {
           <Sidebar />
         </div>
       </aside>
-      <main className="flex-1 min-w-0 flex flex-col">
+      <main className="flex-1 min-w-0 flex flex-col bg-bg">
         <Outlet />
       </main>
     </div>

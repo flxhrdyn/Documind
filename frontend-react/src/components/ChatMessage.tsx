@@ -7,23 +7,27 @@ export default function ChatMessage({ message }: { message: Msg }) {
   const isUser = message.role === 'user';
 
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+    <div
+      className={`flex motion-safe:animate-[message-in_0.25s_ease-out] ${
+        isUser ? 'justify-end' : 'justify-start'
+      }`}
+    >
       <div
         className={`max-w-2xl rounded-2xl px-4 py-3 ${
-          isUser ? 'bg-accent text-accent-fg' : 'bg-cream-card border border-line'
+          isUser ? 'bg-accent text-accent-fg' : 'bg-surface border border-line'
         }`}
       >
         {!isUser && message.thoughts && (
           <div className="mb-2">
             <button
               onClick={() => setShowThoughts((v) => !v)}
-              className="flex items-center gap-1.5 text-xs text-charcoal-muted hover:text-charcoal"
+              className="flex items-center gap-1.5 text-xs text-ink-muted hover:text-ink transition-colors"
             >
               <Brain className="w-3.5 h-3.5" /> Thought Process
               <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showThoughts ? 'rotate-180' : ''}`} />
             </button>
             {showThoughts && (
-              <pre className="mt-2 text-xs whitespace-pre-wrap text-charcoal-muted bg-cream-muted rounded-lg p-3">
+              <pre className="mt-2 text-xs whitespace-pre-wrap text-ink-muted bg-surface-2 rounded-lg p-3 font-mono">
                 {message.thoughts}
               </pre>
             )}

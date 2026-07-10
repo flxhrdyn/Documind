@@ -13,23 +13,35 @@ export default function KnowledgeBaseList() {
 
   return (
     <div>
-      <h2 className="font-display text-sm font-semibold mb-2">Knowledge Base</h2>
-      {isLoading && <p className="text-xs text-charcoal-muted">Loading...</p>}
-      {isError && <p className="text-xs text-accent">Cannot reach backend.</p>}
+      <div className="flex items-center justify-between mb-2.5">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
+          Knowledge Base
+        </h2>
+        {docs.length > 0 && (
+          <span className="text-[11px] font-mono text-ink-muted">{docs.length}</span>
+        )}
+      </div>
+      {isLoading && <p className="text-xs text-ink-muted">Loading...</p>}
+      {isError && <p className="text-xs text-accent-ink">Cannot reach backend.</p>}
       {!isLoading && !isError && docs.length === 0 && (
-        <p className="text-xs text-charcoal-muted">No documents yet.</p>
+        <p className="text-xs text-ink-muted">No documents yet.</p>
       )}
-      <ul className="flex flex-col gap-1">
+      <ul className="flex flex-col gap-0.5">
         {docs.map((name) => (
-          <li key={name} className="flex items-center gap-2 text-sm group">
-            <FileText className="w-4 h-4 text-charcoal-muted shrink-0" />
+          <li
+            key={name}
+            className="group flex items-center gap-2.5 text-sm px-2 py-1.5 -mx-2 rounded-lg hover:bg-surface transition-colors"
+          >
+            <span className="w-6 h-6 rounded-md bg-surface-2 flex items-center justify-center shrink-0">
+              <FileText className="w-3.5 h-3.5 text-ink-muted" />
+            </span>
             <span className="truncate flex-1" title={name}>{name}</span>
             <button
               onClick={() => deleteOne.mutate(name)}
               aria-label={`Delete ${name}`}
-              className="opacity-0 group-hover:opacity-100 text-charcoal-muted hover:text-accent"
+              className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ink-muted hover:text-accent-ink transition-opacity"
             >
-              <Trash2 className="w-4 h-4" />
+              <Trash2 className="w-3.5 h-3.5" />
             </button>
           </li>
         ))}
@@ -37,7 +49,7 @@ export default function KnowledgeBaseList() {
       {docs.length > 0 && (
         <button
           onClick={() => setConfirmAll(true)}
-          className="mt-3 text-xs text-accent hover:underline"
+          className="mt-3 text-xs text-accent-ink hover:underline"
         >
           Delete all documents
         </button>

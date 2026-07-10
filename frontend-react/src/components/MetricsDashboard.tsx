@@ -9,9 +9,9 @@ function pct(v: number | undefined): string {
 
 function Card({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-line bg-cream-card p-4">
-      <p className="text-xs text-charcoal-muted">{label}</p>
-      <p className="font-display text-2xl font-bold mt-1">{value}</p>
+    <div className="rounded-2xl border border-line bg-surface p-4">
+      <p className="text-xs text-ink-muted uppercase tracking-wide">{label}</p>
+      <p className="font-mono text-2xl font-medium mt-1.5 tabular-nums">{value}</p>
     </div>
   );
 }
@@ -34,17 +34,24 @@ export default function MetricsDashboard({ metrics }: { metrics: MetricsResponse
         <Card label="Indexed Docs" value={String(metrics.total_documents_indexed)} />
       </div>
 
-      <div className="rounded-2xl border border-line bg-cream-card p-4">
-        <h3 className="font-display text-sm font-semibold mb-3">Response Time Trend</h3>
+      <div className="rounded-2xl border border-line bg-surface p-4">
+        <h3 className="text-sm font-semibold mb-3">Response Time Trend</h3>
         <ResponsiveContainer width="100%" height={280}>
           <LineChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e4dccc" />
-            <XAxis dataKey="name" fontSize={12} />
-            <YAxis fontSize={12} unit="s" />
-            <Tooltip />
-            <Line type="monotone" dataKey="Total" stroke="#b4552d" strokeWidth={2} />
-            <Line type="monotone" dataKey="Retrieval" stroke="#6b645b" strokeWidth={2} />
-            <Line type="monotone" dataKey="Generation" stroke="#c9714b" strokeWidth={2} />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-line)" />
+            <XAxis dataKey="name" fontSize={12} stroke="var(--color-ink-muted)" />
+            <YAxis fontSize={12} unit="s" stroke="var(--color-ink-muted)" />
+            <Tooltip
+              contentStyle={{
+                background: 'var(--color-surface)',
+                border: '1px solid var(--color-line)',
+                borderRadius: 8,
+                fontSize: 12,
+              }}
+            />
+            <Line type="monotone" dataKey="Total" stroke="var(--color-accent)" strokeWidth={2} />
+            <Line type="monotone" dataKey="Retrieval" stroke="var(--color-ink-muted)" strokeWidth={2} />
+            <Line type="monotone" dataKey="Generation" stroke="var(--color-accent-soft)" strokeWidth={2} />
           </LineChart>
         </ResponsiveContainer>
       </div>

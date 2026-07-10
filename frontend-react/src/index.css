@@ -1,13 +1,52 @@
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 @config "../tailwind.config.ts";
 
-:root { color-scheme: light dark; }
+@custom-variant dark (&:where(.dark, .dark *));
 
-body {
-  @apply bg-cream text-charcoal font-sans antialiased;
+:root {
+  color-scheme: light;
+  --color-bg: #f5f6f7;
+  --color-surface: #ffffff;
+  --color-surface-2: #edeff2;
+  --color-ink: #16181d;
+  --color-ink-muted: #62666f;
+  --color-line: #dfe2e6;
+  --color-accent: #d98c1d;
+  --color-accent-soft: #e8a94f;
+  --color-accent-ink: #8a5510;
+  --color-accent-fg: #1c1206;
 }
 
-.dark body {
-  @apply bg-charcoal text-cream;
+.dark {
+  color-scheme: dark;
+  --color-bg: #101216;
+  --color-surface: #1a1d23;
+  --color-surface-2: #21252c;
+  --color-ink: #edeff2;
+  --color-ink-muted: #9198a3;
+  --color-line: #2c313a;
+  --color-accent: #f0a93b;
+  --color-accent-soft: #f3bd65;
+  --color-accent-ink: #f6c67a;
+  --color-accent-fg: #1c1206;
+}
+
+body {
+  @apply bg-bg text-ink font-sans antialiased;
+}
+
+* {
+  @apply border-line;
+}
+
+@keyframes message-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }

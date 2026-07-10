@@ -2,17 +2,25 @@ import type { Config } from 'tailwindcss';
 
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
-        cream: { DEFAULT: '#f7f3ec', card: '#fffdf8', muted: '#efe8dc' },
-        charcoal: { DEFAULT: '#2b2824', muted: '#6b645b', soft: '#3a3630' },
-        accent: { DEFAULT: '#b4552d', soft: '#c9714b', fg: '#ffffff' },
-        line: '#e4dccc',
+        bg: 'var(--color-bg)',
+        surface: 'var(--color-surface)',
+        'surface-2': 'var(--color-surface-2)',
+        ink: { DEFAULT: 'var(--color-ink)', muted: 'var(--color-ink-muted)' },
+        line: 'var(--color-line)',
+        accent: {
+          DEFAULT: 'var(--color-accent)',
+          soft: 'var(--color-accent-soft)',
+          ink: 'var(--color-accent-ink)',
+          fg: 'var(--color-accent-fg)',
+        },
       },
       fontFamily: {
-        display: ['"Fraunces"', 'Georgia', 'serif'],
-        sans: ['"Inter"', 'system-ui', 'sans-serif'],
+        sans: ['"Manrope"', 'system-ui', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
       },
     },
   },
