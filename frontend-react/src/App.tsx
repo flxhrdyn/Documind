@@ -1,5 +1,16 @@
+import { Navigate, Route, Routes } from 'react-router-dom';
+import Layout from './components/Layout';
+import ChatPage from './pages/ChatPage';
+import AnalyticsPage from './pages/AnalyticsPage';
+
 export default function App() {
   return (
-    <h1 className="font-display text-3xl text-accent p-8">InvenioAI</h1>
+    <Routes>
+      <Route element={<Layout />}>
+        <Route index element={<Navigate to="/chat" replace />} />
+        <Route path="/chat" element={<ChatPage />} />
+        <Route path="/analytics" element={<AnalyticsPage />} />
+      </Route>
+    </Routes>
   );
 }
