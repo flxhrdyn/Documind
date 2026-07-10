@@ -93,6 +93,26 @@ File: `frontend/streamlit_app.py` (`st.session_state.confirm_delete_all`).
 Status: diperbaiki. Klik pertama "Delete All Documents" cuma memunculkan warning + tombol konfirmasi
 ("Yes, delete all" / "Cancel"), eksekusi DELETE sungguhan cuma terjadi setelah klik kedua yang eksplisit.
 
+## Ditemukan saat verifikasi manual oleh user (2026-07-10)
+
+### 11. ~~Skor rerank tidak pernah ditampilkan di UI meski sudah ada di payload API~~ (FIXED)
+
+File: `frontend/streamlit_app.py` (blok render "📚 Sources").
+
+Setelah `docs/audit-backend-rag-core.md`/`docs/audit-infra-deploy.md` memperbaiki `format_docs()` supaya
+field `score` di setiap item `sources` berisi skor rerank sungguhan (bukan 0.0 konstan), user melaporkan
+lewat pengujian manual bahwa skor itu tetap tidak terlihat di UI. Dicek lewat grep - `streamlit_app.py`
+memang tidak pernah merender field `score` sama sekali; datanya sudah benar sampai API, tapi tidak ada
+elemen UI yang menampilkannya.
+
+Status: diperbaiki. Baris caption tiap source sekarang menyertakan `Relevance: {score:.2f}` di samping
+`Page X` dan header section, kalau field `score` berupa angka.
+
+**Catatan verifikasi user**: konten sumber yang sempat terlihat duplikat di UI (blok yang sama muncul dua
+kali dengan caption "Page 1" berulang) dikonfirmasi user sebagai **data lama** dari sebelum fix dedup upload
+(`docs/audit-backend-rag-core.md` #8) aktif - bukan bug baru dari sesi ini. Sisanya (upload PDF sungguhan,
+query, delete dengan konfirmasi) dikonfirmasi user berjalan tanpa error.
+
 ## Arsitektural (akar masalah #1)
 
 ### 10. ~~Frontend import langsung modul internal backend via `sys.path` hack~~ (FIXED, untuk chat history)

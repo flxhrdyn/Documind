@@ -715,9 +715,10 @@ if _is_chat_active():
                     grouped[s['file']].append({
                         "text": s.get('text', ''),
                         "page": s.get('page'),
-                        "header": s.get('header')
+                        "header": s.get('header'),
+                        "score": s.get('score')
                     })
-                
+
                 source_items = list(grouped.items())
                 if source_items:
                     with st.expander(f"📚 {len(source_items)} Sources", expanded=False):
@@ -727,13 +728,16 @@ if _is_chat_active():
                                 text = item["text"]
                                 page = item["page"]
                                 header = item.get("header")
-                                
+                                score = item.get("score")
+
                                 meta_parts = []
                                 if page:
                                     meta_parts.append(f"**Page {page}**")
                                 if header:
                                     meta_parts.append(f"_{header}_")
-                                
+                                if isinstance(score, (int, float)):
+                                    meta_parts.append(f"Relevance: {score:.2f}")
+
                                 if meta_parts:
                                     st.caption(" · ".join(meta_parts))
                                     
