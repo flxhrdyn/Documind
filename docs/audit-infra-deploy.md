@@ -62,26 +62,54 @@ pun. Diverifikasi manual:
 `[("thinking","Block A"), ("token","Answer1"), ("thinking","Block B"), ("token","Answer2")]` - sebelumnya
 "Block B" akan bocor sebagai token/jawaban.
 
-## Baru ditemukan saat audit CI/CD
+## Baru ditemukan saat audit CI/CD dan frontend theme
 
-### 6. `backend/requirements.txt` dan root `pyproject.toml` sudah divergen isi paketnya
+### 6. ~~`backend/requirements.txt` dan root `pyproject.toml` sudah divergen isi paketnya~~ (FIXED)
 
-File: `backend/requirements.txt` vs `pyproject.toml`.
+File: `pyproject.toml`, `backend/requirements.txt`, `uv.lock`.
 
-`backend/requirements.txt` (dipakai Docker build dan `.github/workflows/ci.yml`) berisi
-`rank-bm25`, `tf-keras`, `llama-parse`, `llama-index` yang **tidak ada** di daftar `dependencies` root
-`pyproject.toml` (dipakai `uv sync`/`uv lock` untuk environment dev lokal). Ini konsisten dengan desain yang
-didokumentasikan di `CLAUDE.md` ("Backend and frontend have separate requirements.txt ... for independent
-container builds"), tapi berarti environment dev yang di-setup lewat `uv sync` bisa saja tidak punya paket
-yang sebenarnya dibutuhkan backend runtime (mis. `llama-parse` yang dipakai `index_data.py`).
+Diverifikasi konkret lewat grep import di `backend/app/`: `llama_parse` benar-benar dipakai
+(`index_data.py:147`, `from llama_parse import LlamaParse`) tapi **hilang dari `pyproject.toml`** - artinya
+`uv sync` di environment dev akan menghasilkan environment yang crash `ImportError` begitu proses indexing
+PDF sungguhan dijalankan. `llama_index` dan `tf-keras` juga dipakai transitif oleh stack yang sama tapi
+sama-sama hilang dari `pyproject.toml`. Sebaliknya, `rank-bm25` ada di `backend/requirements.txt` tapi
+**tidak pernah di-import di mana pun** - sisa dependency mati dari implementasi hybrid BM25 lokal lama
+(sebelum native Qdrant BM42 dipakai, konsisten dengan temuan config mati `HYBRID_DENSE_WEIGHT`/
+`HYBRID_SPARSE_WEIGHT` di `docs/audit-backend-rag-core.md` #10).
 
-Status: **tidak diperbaiki di sesi ini** - memutuskan mana yang jadi sumber kebenaran (root `pyproject.toml`
-vs `backend/requirements.txt`) dan menyatukannya adalah keputusan arsitektur yang butuh testing environment
-dev yang tidak tersedia di sesi ini (risiko merusak setup `uv sync` tanpa cara memverifikasi). Dicatat untuk
-tindak lanjut: audit `pyproject.toml` dependencies vs `backend/requirements.txt` line-by-line, putuskan satu
-sumber kebenaran atau dokumentasikan eksplisit bahwa keduanya sengaja independen.
+Status: diperbaiki. `tf-keras`, `llama-parse`, `llama-index` ditambahkan ke `dependencies` di
+`pyproject.toml` (env dev `uv sync` sekarang punya semua paket yang backend benar-benar butuhkan).
+`rank-bm25` dihapus dari `backend/requirements.txt` (dead dependency). `uv lock` dijalankan ulang untuk
+resolve lockfile baru - berhasil tanpa konflik versi. Test suite penuh dijalankan setelahnya: **84 passed,
+0 failed, 2 skipped** (termasuk `test_sparse_embedding_output` yang sebelumnya gagal karena isu cache model
+lokal - sekarang lolos juga).
 
-### 7. CI/CD sudah menjalankan test dan cukup aman - tidak ada temuan blocking
+### 7. `--invenio-bg-secondary` dipakai di CSS tapi tidak pernah didefinisikan di `theme.py`
+
+File: `frontend/theme.py` (`CSS_VARS`), dipakai di `frontend/streamlit_app.py` (background chat message,
+header tabel).
+
+`streamlit_app.py` memakai `var(--invenio-bg-secondary)` di dua tempat (background `[data-testid="stChatMessage"]`
+dan `th` header tabel), tapi `CSS_VARS` di `theme.py` cuma mendefinisikan `--invenio-accent`,
+`--invenio-bg-card`, `--invenio-border` - `--invenio-bg-secondary` tidak pernah dideklarasikan. CSS custom
+property yang undefined tanpa nilai fallback membuat declaration itu invalid di computed-value time; untuk
+`background-color` (properti non-inherited), browser jatuh ke initial value `transparent`. Chat bubble dan
+header tabel jadi tidak dapat background themed yang dimaksud desainnya.
+
+Status: diperbaiki. `--invenio-bg-secondary: var(--secondary-bg-color);` ditambahkan ke `CSS_VARS`,
+konsisten dengan `COLORS["bg_secondary"]` yang sudah ada nilai yang sama di dict Python-nya tapi tidak
+pernah dicerminkan ke CSS var yang sebenarnya dipakai.
+
+### 8. `streamlit_app.py` import `COLORS` dari `theme.py` tapi tidak pernah memakainya
+
+File: `frontend/streamlit_app.py`.
+
+`from theme import COLORS, CSS_VARS` - dicek lewat grep, `COLORS[...]` tidak pernah dipakai di file ini
+(cuma `CSS_VARS` yang dipakai). `COLORS` cuma dipakai di `frontend/pages/dashboard.py`.
+
+Status: diperbaiki. Import dipersempit jadi `from theme import CSS_VARS` saja.
+
+### 9. CI/CD sudah menjalankan test dan cukup aman - tidak ada temuan blocking
 
 File: `.github/workflows/ci.yml`, `.github/workflows/sync-to-hf-space.yml`.
 
@@ -103,14 +131,46 @@ production readiness" - dicatat sebagai potensi peningkatan, bukan temuan.
 
 ## Verifikasi
 
-- `uv lock` sukses resolve 127 packages tanpa error setelah edit `.gitignore`.
+- `uv lock` sukses resolve 127 packages tanpa error setelah edit `.gitignore`, lalu resolve ulang sukses
+  (menambahkan `tensorflow`, `tf-keras`, `llama-index`, `llama-parse`, dan dependency transitifnya) setelah
+  fix #6.
 - `docker-compose.yml` tervalidasi sebagai YAML yang valid setelah fix Redis.
-- `python -m pytest backend/tests` - 83 passed, 2 skipped (1 gagal pra-eksisting tidak terkait, soal
-  download model di lingkungan lokal).
+- `python -m pytest backend/tests` - **84 passed, 0 failed, 2 skipped** (naik dari 83 passed/1 failed
+  sebelum fix #6 - `test_sparse_embedding_output` yang tadinya gagal karena cache model lokal korup
+  sekarang lolos juga).
+- `python -m py_compile` lolos untuk `streamlit_app.py`, `theme.py`, `dashboard.py` setelah fix #7/#8.
+- Uji end-to-end nyata (upload PDF sungguhan lewat backend yang benar-benar jalan) dicoba di sesi ini:
+  backend start bersih dan terhubung ke Qdrant Cloud, tapi upload gagal karena model sparse BM42
+  (`model.onnx`, berkas besar) macet di-download dari Hugging Face Hub di lingkungan sandbox ini
+  (`.incomplete` stuck di 147KB, tidak nambah lagi setelah dicoba ulang dengan cache dibersihkan). Ini
+  keterbatasan jaringan sandbox, bukan bug kode - perlu diverifikasi ulang di mesin dengan akses jaringan
+  penuh ke HF Hub.
+
+## Test coverage - celah yang ditambal (2026-07-10)
+
+Audit coverage menemukan bahwa fix-fix berikut dari sesi audit ini belum punya test khusus (cuma
+diverifikasi manual). Test baru ditambahkan untuk semuanya:
+
+- `backend/tests/test_index_api.py`: cache RAG di-clear + retriever cache di-invalidate saat hapus satu
+  dokumen (`test_delete_document_clears_cache_and_invalidates_retriever`); `_find_duplicate_document` (3
+  test); `_index_uploaded_pdf` menolak upload duplikat dengan HTTP 409 dan membersihkan file yang baru
+  disimpan.
+- `backend/tests/test_index_data.py`: guard ketidakcocokan model embedding, `TestEmbeddingModelGuard` (3
+  test - rekam marker pertama kali, lolos kalau cocok, tolak kalau beda); rollback batch indexing saat
+  gagal separuh jalan (`TestIndexDocumentsRollback`); table header ke-carry ke chunk lanjutan pakai
+  splitter asli (bukan mock) dengan tabel 120 baris.
+- `backend/tests/test_auth.py` (baru): `require_api_key` nonaktif default, tolak key hilang/salah, terima
+  key benar, endpoint `/metrics` benar-benar 401/200 sesuai state, `/` tetap terbuka meski auth aktif.
+- `backend/tests/test_retriever.py` (baru): `build_retriever()` reuse stack untuk client Qdrant yang sama,
+  `invalidate_retriever_cache()` memaksa rebuild, cache otomatis rebuild kalau instance client Qdrant
+  berganti, error yang benar tanpa `GROQ_API_KEY`/koleksi belum ada.
+- `backend/tests/test_thinking_parser.py`: blok `<thinking>` ganda tidak lagi bocor ke jawaban.
+- `backend/tests/test_utils.py`: `format_docs()` memakai skor rerank yang diteruskan, bukan selalu 0.0.
+
+Total: **+26 test baru**. Suite penuh: **110 passed, 0 failed, 2 skipped** (naik dari 84 passed sebelum
+penambahan test ini).
 
 ## Belum diaudit
 
-- `backend/tests/` - belum dicek seberapa besar celah di tiga laporan audit ini sudah/belum tercakup test
-  yang ada (butuh sesi terpisah untuk audit coverage test).
-- Environment dev lokal (`uv sync`) belum diuji end-to-end untuk mengonfirmasi temuan #6 di atas benar-benar
-  menyebabkan kegagalan runtime nyata.
+- Upload/index PDF end-to-end sungguhan (lewat UI atau API langsung) belum berhasil diverifikasi di sesi
+  manapun karena keterbatasan jaringan sandbox untuk download model BM42 - perlu dicoba di environment lain.
