@@ -74,7 +74,7 @@ export default function ChatMessage({
       <div
         className={`max-w-[85%] md:max-w-[75%] px-5 py-4 rounded-2xl text-sm leading-relaxed border ${
           isUser
-            ? 'bg-surface text-ink border-line rounded-tr-sm'
+            ? 'bg-surface text-ink border-ink/10 shadow-sm rounded-tr-sm'
             : 'bg-transparent text-ink border-none px-0 py-2'
         }`}
       >

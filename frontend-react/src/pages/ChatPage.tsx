@@ -10,7 +10,13 @@ export default function ChatPage() {
   const { data } = useDocuments();
   const [sourcesOpen, setSourcesOpen] = useState(false);
 
-  const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant');
+  let lastAssistant;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'assistant') {
+      lastAssistant = messages[i];
+      break;
+    }
+  }
   const sources = lastAssistant?.sources ?? [];
 
   return (

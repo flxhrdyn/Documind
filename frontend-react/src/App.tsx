@@ -1,7 +1,9 @@
+import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import Layout from './components/Layout';
 import ChatPage from './pages/ChatPage';
-import AnalyticsPage from './pages/AnalyticsPage';
+
+const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'));
 
 export default function App() {
   return (
@@ -9,7 +11,14 @@ export default function App() {
       <Route element={<Layout />}>
         <Route index element={<Navigate to="/chat" replace />} />
         <Route path="/chat" element={<ChatPage />} />
-        <Route path="/analytics" element={<AnalyticsPage />} />
+        <Route
+          path="/analytics"
+          element={
+            <Suspense fallback={null}>
+              <AnalyticsPage />
+            </Suspense>
+          }
+        />
       </Route>
     </Routes>
   );

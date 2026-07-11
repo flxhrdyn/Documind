@@ -10,7 +10,7 @@ function scoreLabel(score: number): string {
 function scoreClass(score: number): string {
   if (score >= 0.75) return 'text-accent-ink bg-accent/15 border-accent/30';
   if (score >= 0.3) return 'text-accent-ink bg-accent/10 border-accent/20';
-  return 'text-ink-muted bg-surface-2 border-line';
+  return 'text-ink-muted bg-ink/10 border-ink/20';
 }
 
 export default function SourcesPanel({
@@ -81,7 +81,7 @@ export default function SourcesPanel({
                     </span>
                   )}
                 </div>
-                <div className="text-[11.5px] leading-relaxed text-ink-muted bg-surface-2/50 p-2.5 rounded-lg border border-line line-clamp-4">
+                <div className="text-[11.5px] leading-relaxed text-ink-muted italic line-clamp-4 pt-2 mt-0.5 border-t border-line/60">
                   {c.text}
                 </div>
               </div>

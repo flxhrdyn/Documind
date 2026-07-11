@@ -6,12 +6,12 @@
 
 :root {
   color-scheme: light;
-  --color-bg: #f6f7f8;
+  --color-bg: #eef0f2;
   --color-surface: #ffffff;
-  --color-surface-2: #eef0f2;
+  --color-surface-2: #e2e5e9;
   --color-ink: #14161a;
-  --color-ink-muted: #676c76;
-  --color-line: #dfe2e6;
+  --color-ink-muted: #565b64;
+  --color-line: #c9cdd3;
   --color-accent: #0f766e;
   --color-accent-soft: #14b8a6;
   --color-accent-ink: #0f766e;
@@ -21,12 +21,12 @@
 
 .dark {
   color-scheme: dark;
-  --color-bg: #0a0b0d;
-  --color-surface: #121317;
-  --color-surface-2: #17181d;
-  --color-ink: #e7e9ec;
-  --color-ink-muted: #82868f;
-  --color-line: #23252b;
+  --color-bg: #08090b;
+  --color-surface: #18191e;
+  --color-surface-2: #212329;
+  --color-ink: #f0f1f3;
+  --color-ink-muted: #999fab;
+  --color-line: #33363e;
   --color-accent: #2dd4bf;
   --color-accent-soft: #5eead4;
   --color-accent-ink: #5eead4;

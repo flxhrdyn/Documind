@@ -1,0 +1,60 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Brand Warm Accents - OKLCH teal/pine tones */
+  --color-brand-50: oklch(0.97 0.015 190);
+  --color-brand-100: oklch(0.93 0.03 190);
+  --color-brand-500: oklch(0.55 0.11 190);
+  --color-brand-600: oklch(0.45 0.10 190);
+  --color-brand-700: oklch(0.35 0.09 190);
+  
+  --color-accent-teal: oklch(0.60 0.11 190);
+}
+
+@layer base {
+  body {
+    @apply font-sans antialiased text-gray-900 bg-gray-50/50 transition-colors duration-300;
+  }
+  
+  .dark body {
+    @apply text-gray-100 bg-gray-950;
+  }
+
+  /* Focus ring accessibility */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-teal-500/80 ring-offset-2 dark:ring-offset-gray-950;
+  }
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-300/60 rounded-full dark:bg-gray-800/60 hover:bg-gray-400/80 dark:hover:bg-gray-700/80;
+}
+
+/* NotebookLM-style quote highlight flash */
+@keyframes highlight-flash {
+  0% {
+    background-color: rgba(13, 148, 136, 0.25); /* teal-500 with opacity */
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.citation-highlight {
+  animation: highlight-flash 2.5s ease-out forwards;
+}
