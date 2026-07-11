@@ -2,6 +2,21 @@ import { useRef, useState } from 'react';
 import { Upload, AlertCircle, Loader2 } from 'lucide-react';
 import { useUploadJob } from '../hooks/useUploadJob';
 
+const STATUS_LABELS: Record<string, string> = {
+  uploading: 'Uploading document...',
+  pending: 'Queued for indexing...',
+  running: 'Starting indexing job...',
+  parsing: 'Parsing document...',
+  indexing: 'Saving to knowledge base...',
+};
+
+function statusLabel(status: string | null): string {
+  if (!status) return 'Processing...';
+  return STATUS_LABELS[status] ?? 'Processing...';
+}
+
+const MAX_UPLOAD_MB = 15;
+
 export default function UploadPanel() {
   const { upload, status, isUploading } = useUploadJob();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -12,6 +27,10 @@ export default function UploadPanel() {
     if (!file) return;
     if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
       setError('Only PDF document files are supported by the InvenioAI indexing engine.');
+      return;
+    }
+    if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+      setError(`"${file.name}" is ${(file.size / (1024 * 1024)).toFixed(1)}MB, over the ${MAX_UPLOAD_MB}MB limit. Try a smaller file.`);
       return;
     }
     setError(null);
@@ -25,8 +44,8 @@ export default function UploadPanel() {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold font-display text-ink">Upload Document</h3>
-        <span className="text-xs text-ink-muted">Max 15MB</span>
+        <h2 className="text-sm font-semibold font-display text-ink">Upload Document</h2>
+        <span className="text-xs text-ink-muted">Max {MAX_UPLOAD_MB}MB</span>
       </div>
 
       <div
@@ -66,7 +85,7 @@ export default function UploadPanel() {
           )}
         </div>
         {isUploading ? (
-          <p className="text-sm font-medium text-ink-muted">Indexing... ({status})</p>
+          <p className="text-sm font-medium text-ink-muted">{statusLabel(status)}</p>
         ) : (
           <>
             <p className="text-sm font-medium text-ink">

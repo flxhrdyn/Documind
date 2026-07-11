@@ -20,9 +20,9 @@ function StatCard({
     <div className="p-5 rounded-2xl bg-surface border border-line flex flex-col justify-between">
       <div>
         <span className="text-[10px] font-mono font-semibold text-ink-muted uppercase tracking-wider">{label}</span>
-        <h4 className="text-3xl font-display font-bold text-ink mt-1">
+        <p className="text-3xl font-display font-bold text-ink mt-1">
           {value} {unit && <span className="text-xs font-sans font-normal text-ink-muted">{unit}</span>}
-        </h4>
+        </p>
       </div>
       <div className="mt-3 flex items-center gap-1.5 text-xs text-ink-muted">
         {icon}
@@ -63,15 +63,15 @@ export default function MetricsDashboard({ metrics }: { metrics: MetricsResponse
           label="Average Latency"
           value={ms(metrics.avg_response_time)}
           unit="ms"
-          icon={<TrendingDown className="w-3.5 h-3.5 text-emerald-500" />}
-          hint="Reflects overall search and answer time"
+          icon={<TrendingDown className="w-3.5 h-3.5 text-accent-ink" />}
+          hint="End-to-end, including cache hits"
         />
         <StatCard
           label="Retrieval Latency"
           value={ms(metrics.avg_retrieval_time)}
           unit="ms"
-          icon={<Cpu className="w-3.5 h-3.5 text-indigo-400" />}
-          hint="Document search and matching"
+          icon={<Cpu className="w-3.5 h-3.5 text-chart-2" />}
+          hint="Dense + sparse retrieval only"
         />
         <StatCard
           label="Indexed Docs"
@@ -93,7 +93,7 @@ export default function MetricsDashboard({ metrics }: { metrics: MetricsResponse
               <span className="text-ink-muted font-sans">Generation</span>
             </span>
             <span className="flex items-center gap-1">
-              <span className="w-2.5 h-2.5 bg-indigo-400/80 rounded-sm" />
+              <span className="w-2.5 h-2.5 bg-chart-2/80 rounded-sm" />
               <span className="text-ink-muted font-sans">Retrieval</span>
             </span>
           </div>
@@ -106,11 +106,11 @@ export default function MetricsDashboard({ metrics }: { metrics: MetricsResponse
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorRetrieval" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#818cf8" stopOpacity={0.25} />
-                    <stop offset="95%" stopColor="#818cf8" stopOpacity={0} />
+                    <stop offset="5%" stopColor="var(--color-chart-2)" stopOpacity={0.25} />
+                    <stop offset="95%" stopColor="var(--color-chart-2)" stopOpacity={0} />
                   </linearGradient>
                   <linearGradient id="colorGeneration" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="var(--color-accent)" stopOpacity={0.25} />
@@ -128,7 +128,7 @@ export default function MetricsDashboard({ metrics }: { metrics: MetricsResponse
                     fontSize: 11,
                   }}
                 />
-                <Area type="monotone" dataKey="Retrieval" stackId="1" stroke="#818cf8" strokeWidth={2} fill="url(#colorRetrieval)" />
+                <Area type="monotone" dataKey="Retrieval" stackId="1" stroke="var(--color-chart-2)" strokeWidth={2} fill="url(#colorRetrieval)" />
                 <Area type="monotone" dataKey="Generation" stackId="1" stroke="var(--color-accent)" strokeWidth={2} fill="url(#colorGeneration)" />
               </AreaChart>
             </ResponsiveContainer>
@@ -138,7 +138,7 @@ export default function MetricsDashboard({ metrics }: { metrics: MetricsResponse
 
       <div className="p-6 rounded-2xl bg-surface border border-line">
         <div className="flex items-center gap-2 mb-4">
-          <BarChart3 className="w-4 h-4 text-indigo-400" />
+          <BarChart3 className="w-4 h-4 text-chart-2" />
           <h3 className="text-sm font-semibold font-display text-ink">Information Retrieval Quality</h3>
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

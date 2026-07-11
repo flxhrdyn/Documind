@@ -18,6 +18,7 @@ export interface ChatMessage {
   sources?: Citation[];
   thoughts?: string;
   timestamp?: string;
+  isError?: boolean;
 }
 
 export interface UploadJob {

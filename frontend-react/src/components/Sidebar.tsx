@@ -11,8 +11,9 @@ export default function Sidebar() {
       </div>
       <div className="rounded-xl bg-surface-2/50 border border-line p-4 flex items-start gap-2.5">
         <Info className="w-4 h-4 text-ink-muted shrink-0 mt-0.5" />
-        <p className="text-[10px] text-ink-muted leading-relaxed">
-          Ask questions about your uploaded documents. Answers are grounded strictly in the parsed files.
+        <p className="text-xs text-ink-muted leading-relaxed">
+          Numbered badges like <span className="font-semibold text-ink">[1]</span> in an answer link to
+          the exact passage it came from. &ldquo;Match&rdquo; shows how closely that passage fits your question.
         </p>
       </div>
     </div>

@@ -19,7 +19,7 @@ from .qdrant_conn import close_qdrant_client, is_qdrant_client_closed_error
 from .reranker import rerank
 from .retriever import build_retriever, retrieve_documents, retrieve_documents_async
 import json
-from .utils import format_docs, ThinkingParser
+from .utils import format_docs, drop_empty_docs, ThinkingParser
 from .metrics import log_query
 from .embeddings import get_embeddings
 
@@ -62,14 +62,15 @@ CORE RULES:
 
 EXAMPLE OF ANALYSIS:
 Context: "User Manual: Press RED for 5s. Table: | Action | Duration | \n | Reset | 10s |"
+Sources: "[1] user_manual.pdf (Page 3)\n[2] spec_table.pdf (Page 7)"
 User: "Bagaimana cara reset?"
 <thinking>
 Step 1 (Deconstruction): User asks for reset procedure.
-Step 2 (Retrieval): Manual says RED button for 5s. Table says 10s for Reset.
+Step 2 (Retrieval): Manual says RED button for 5s [1]. Table says 10s for Reset [2].
 Step 3 (Cross-Validation/Synthesis): There is a conflict between text (5s) and table (10s). The table specifically labels the action as 'Reset'.
 Step 4 (Strategy): Report both if ambiguous, but prioritize the specific label.
 </thinking>
-Berdasarkan tinjauan pada dokumen panduan pengguna, terdapat dua informasi terkait prosedur reset yang perlu diperhatikan. Pada bagian tabel spesifikasi teknis, durasi reset ditetapkan selama 10 detik. Namun, pada instruksi naratif di bagian teks, disebutkan penekanan tombol MERAH selama 5 detik. Untuk hasil yang lebih akurat, disarankan untuk mengikuti ketentuan pada tabel spesifikasi (10 detik) karena labelnya lebih spesifik untuk tindakan 'Reset'.
+Berdasarkan tinjauan pada dokumen panduan pengguna, terdapat dua informasi terkait prosedur reset yang perlu diperhatikan. Pada bagian tabel spesifikasi teknis, durasi reset ditetapkan selama 10 detik [2]. Namun, pada instruksi naratif di bagian teks, disebutkan penekanan tombol MERAH selama 5 detik [1]. Untuk hasil yang lebih akurat, disarankan untuk mengikuti ketentuan pada tabel spesifikasi (10 detik) karena labelnya lebih spesifik untuk tindakan 'Reset' [2].
 
 Context:
 {context}
@@ -95,7 +96,10 @@ Instructions:
    - **NO BACKTICKS**: NEVER use single backticks (`) or triple backticks (```) to highlight numbers, text, or anything else. If you need to emphasize something, use bold text (**) instead.
    - **NO INTRO OR FILLER**: Do NOT use filler phrases like "Berikut adalah...", "Informasi ini ditemukan pada bagian...", or "Based on the documents...". Start directly with the factual answer.
    - Use a polite and professional tone in the SAME LANGUAGE as the question.
-6. DO NOT cite sources manually.
+6. **Citations**: After each claim, add the matching bracketed number from the Sources list below,
+   e.g. "...ditetapkan selama 10 detik [2]." Use the exact `[n]` markers from Sources, in the same
+   language-neutral numeric form, right after the sentence or clause they support. Cite every factual
+   claim at least once; do not invent numbers beyond what Sources lists.
 
 Sources:
 {sources}
@@ -304,6 +308,7 @@ def _run_rag_pipeline_with_query(standalone_query: str, original_question: str, 
         dense_retriever=retriever,
         client=client,
     )
+    retrieved_docs = drop_empty_docs(retrieved_docs)
 
     if not retrieved_docs:
         retrieval_time = time.monotonic() - retrieval_start
@@ -508,6 +513,7 @@ async def rag_pipeline_stream_async(query: str, chat_history: list[str]):
             else:
                 raise
         retrieval_time = time.monotonic() - retrieval_start
+        docs = drop_empty_docs(docs)
 
         if not docs:
             yield json.dumps({

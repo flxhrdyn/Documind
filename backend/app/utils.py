@@ -5,6 +5,16 @@ from __future__ import annotations
 from typing import Any, Iterable, Optional, Tuple, List, Dict
 
 
+def drop_empty_docs(docs: Iterable[Any]) -> List[Any]:
+    """Drop chunks with no real content.
+
+    Indexing occasionally produces a blank chunk (e.g. a header-only page
+    split) with no page_content and no source metadata - it renders as an
+    `unknown` / `Page 0` source card and adds nothing to the LLM context.
+    """
+    return [doc for doc in docs if getattr(doc, "page_content", "").strip()]
+
+
 def format_docs(
     docs: Iterable[Any], scores: Optional[List[float]] = None
 ) -> Tuple[str, str, List[Dict[str, Any]]]:
@@ -26,7 +36,6 @@ def format_docs(
 
     # Structured metadata for the frontend
     sources_json = []
-    source_files: set[str] = set()
 
     for i, doc in enumerate(docs_list):
         metadata = getattr(doc, "metadata", None) or {}
@@ -34,7 +43,6 @@ def format_docs(
         if not isinstance(source_path, str):
             source_path = "unknown"
         filename = source_path.split("\\")[-1].split("/")[-1]
-        source_files.add(filename)
 
         score = scores[i] if scores is not None and i < len(scores) else metadata.get("score", 0.0)
 
@@ -46,7 +54,10 @@ def format_docs(
             "score": score
         })
 
-    sources_str = "\n".join(f"- {filename}" for filename in sorted(source_files))
+    sources_str = "\n".join(
+        f"[{i + 1}] {entry['file']}" + (f" (Page {entry['page']})" if entry['page'] else "")
+        for i, entry in enumerate(sources_json)
+    )
     return context, sources_str, sources_json
 
 

@@ -23,10 +23,19 @@ Run backend (from `backend/`, package root is `app`):
 cd backend && uvicorn app.main:app --reload
 ```
 
-Run frontend:
+Run frontend (Streamlit, current production frontend):
 ```bash
 streamlit run frontend/streamlit_app.py
 ```
+
+Run frontend (React, in-progress migration target — lives in `frontend-react/`):
+```bash
+cd frontend-react
+npm install
+cp .env.example .env      # set backend API URL
+npm run dev                # localhost:3000
+```
+Other scripts: `npm run build`, `npm run test` (vitest), `npm run lint` (tsc --noEmit).
 
 Run both together (Linux/Mac, mirrors HF Space startup):
 ```bash
@@ -85,6 +94,10 @@ Backend is a flat module layout under `backend/app/` (no sub-packages) — impor
 Frontend (`frontend/`) is a Streamlit app (`streamlit_app.py` + `pages/dashboard.py` for analytics,
 `theme.py` for the custom CSS design system) that talks to the backend over REST
 (`INVENIOAI_API_BASE_URL`, defaults to `http://backend:8000` in Docker Compose).
+
+`frontend-react/` is a React 19 + Vite + TypeScript rewrite of the frontend, in progress
+(react-router-dom, TanStack Query, Tailwind v4, recharts). Streamlit remains the frontend in
+production until the migration is complete — both can run side by side against the same backend.
 
 Data flow: PDF upload → `index_api` → LlamaParse + chunking → Qdrant (dense+sparse) → query comes in via
 `main.py` → `rag_pipeline` checks semantic cache → on miss, hybrid retrieve from Qdrant → rerank → CoT

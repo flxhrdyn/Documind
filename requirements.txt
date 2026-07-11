@@ -8,6 +8,7 @@ langchain>=0.3.7
 langchain-core>=0.3.17
 langchain-community>=0.3.7
 langchain-groq>=0.2.1
+groq>=0.30.0,<1.0.0
 langchain-qdrant>=0.2.0
 langchain-classic>=1.0.5
 langchain-experimental>=0.3.4

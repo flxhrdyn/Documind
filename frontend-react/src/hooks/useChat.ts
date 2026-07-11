@@ -23,6 +23,29 @@ export function useChat() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
   }, [messages]);
 
+  const runQuery = useCallback(async (trimmed: string, assistantId: string, historyBefore: string[]) => {
+    setIsGenerating(true);
+    const patch = (fn: (m: ChatMessage) => ChatMessage) =>
+      setMessages((prev) => prev.map((m) => (m.id === assistantId ? fn(m) : m)));
+
+    try {
+      await streamQuery(trimmed, historyBefore, {
+        onToken: (c) => patch((m) => ({ ...m, content: m.content + c, isError: false })),
+        onDone: (p) =>
+          patch((m) => ({ ...m, content: p.answer, sources: p.sources, thoughts: p.thoughts, isError: false })),
+        onError: (msg) => patch((m) => ({ ...m, content: msg, isError: true })),
+      });
+    } catch {
+      patch((m) => ({
+        ...m,
+        content: 'We couldn’t reach the server. Check your connection and try again.',
+        isError: true,
+      }));
+    } finally {
+      setIsGenerating(false);
+    }
+  }, []);
+
   const send = useCallback(async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || isGenerating) return;
@@ -34,24 +57,22 @@ export function useChat() {
 
     const history = messagesRef.current.map((m) => `${m.role}: ${m.content}`);
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
-    setIsGenerating(true);
+    await runQuery(trimmed, assistantId, history);
+  }, [isGenerating, runQuery]);
 
-    const patch = (fn: (m: ChatMessage) => ChatMessage) =>
-      setMessages((prev) => prev.map((m) => (m.id === assistantId ? fn(m) : m)));
+  const retry = useCallback(async (assistantId: string) => {
+    if (isGenerating) return;
+    const idx = messagesRef.current.findIndex((m) => m.id === assistantId);
+    if (idx < 1) return;
+    const userMsg = messagesRef.current[idx - 1];
+    if (userMsg.role !== 'user') return;
 
-    try {
-      await streamQuery(trimmed, history, {
-        onToken: (c) => patch((m) => ({ ...m, content: m.content + c })),
-        onDone: (p) =>
-          patch((m) => ({ ...m, content: p.answer, sources: p.sources, thoughts: p.thoughts })),
-        onError: (msg) => patch((m) => ({ ...m, content: `Error: ${msg}` })),
-      });
-    } finally {
-      setIsGenerating(false);
-    }
-  }, [isGenerating]);
+    const history = messagesRef.current.slice(0, idx - 1).map((m) => `${m.role}: ${m.content}`);
+    setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: '', isError: false } : m)));
+    await runQuery(userMsg.content, assistantId, history);
+  }, [isGenerating, runQuery]);
 
   const clear = useCallback(() => setMessages([]), []);
 
-  return { messages, isGenerating, send, clear };
+  return { messages, isGenerating, send, retry, clear };
 }

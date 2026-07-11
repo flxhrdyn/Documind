@@ -16,7 +16,7 @@ export default function KnowledgeBaseList() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Database className="w-3.5 h-3.5 text-accent" />
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Knowledge Base</h3>
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Knowledge Base</h2>
         </div>
         {docs.length > 0 && (
           <button
@@ -35,7 +35,7 @@ export default function KnowledgeBaseList() {
         <div className="flex flex-col items-center justify-center py-8 px-4 rounded-xl border border-line bg-surface-2/20 text-center">
           <Database className="w-6 h-6 text-ink-muted/40 mb-2" />
           <p className="text-xs font-medium text-ink-muted">No documents indexed yet</p>
-          <p className="text-[10px] text-ink-muted/70 mt-0.5">Upload a PDF file above to train the knowledge base</p>
+          <p className="text-xs text-ink-muted/70 mt-0.5">Upload a PDF file above to train the knowledge base</p>
         </div>
       )}
 

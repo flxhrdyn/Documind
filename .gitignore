@@ -72,3 +72,5 @@ logs/
 temp/
 tmp/docs/
 .superpowers/
+# impeccable design-review tool: keep critique history, drop ephemeral live-server state
+.impeccable/live/

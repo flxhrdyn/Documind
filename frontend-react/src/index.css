@@ -12,10 +12,11 @@
   --color-ink: #14161a;
   --color-ink-muted: #676c76;
   --color-line: #dfe2e6;
-  --color-accent: #0d9488;
+  --color-accent: #0f766e;
   --color-accent-soft: #14b8a6;
   --color-accent-ink: #0f766e;
-  --color-accent-fg: #f2fbf9;
+  --color-accent-fg: #ffffff;
+  --color-chart-2: #6366f1;
 }
 
 .dark {
@@ -30,6 +31,7 @@
   --color-accent-soft: #5eead4;
   --color-accent-ink: #5eead4;
   --color-accent-fg: #06231f;
+  --color-chart-2: #a5b4fc;
 }
 
 body {
@@ -48,5 +50,28 @@ body {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-in-left {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

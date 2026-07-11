@@ -8,9 +8,10 @@ interface Props {
   isGenerating: boolean;
   hasDocuments: boolean;
   onSend: (text: string) => void;
+  onRetry: (assistantId: string) => void;
 }
 
-export default function ChatPanel({ messages, isGenerating, hasDocuments, onSend }: Props) {
+export default function ChatPanel({ messages, isGenerating, hasDocuments, onSend, onRetry }: Props) {
   const [input, setInput] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -54,7 +55,7 @@ export default function ChatPanel({ messages, isGenerating, hasDocuments, onSend
         {messages.length > 0 && (
           <div className="max-w-3xl mx-auto space-y-6">
             {messages.map((m) => (
-              <ChatMessageView key={m.id} message={m} />
+              <ChatMessageView key={m.id} message={m} onRetry={onRetry} />
             ))}
 
             {isLastAssistantStreaming && (
@@ -109,10 +110,10 @@ export default function ChatPanel({ messages, isGenerating, hasDocuments, onSend
             </div>
           </div>
         </div>
-        <div className="max-w-3xl mx-auto text-center mt-2.5 text-[11px] text-ink-muted">
+        <div className="max-w-3xl mx-auto text-center mt-2.5 text-xs text-ink-muted">
           <span>
-            Press <kbd className="px-1.5 py-0.5 bg-surface-2 rounded text-[10px]">Enter</kbd> to ask,{' '}
-            <kbd className="px-1.5 py-0.5 bg-surface-2 rounded text-[10px]">Shift + Enter</kbd> for a new line
+            Press <kbd className="px-1.5 py-0.5 bg-surface-2 rounded text-[11px]">Enter</kbd> to ask,{' '}
+            <kbd className="px-1.5 py-0.5 bg-surface-2 rounded text-[11px]">Shift + Enter</kbd> for a new line
           </span>
         </div>
       </div>

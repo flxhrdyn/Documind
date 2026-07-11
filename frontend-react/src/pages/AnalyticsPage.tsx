@@ -9,7 +9,7 @@ export default function AnalyticsPage() {
       <div className="max-w-4xl mx-auto space-y-6">
         <div className="pb-4 border-b border-line">
           <h2 className="text-base font-semibold font-display text-ink">RAG Pipeline Analytics Dashboard</h2>
-          <p className="text-xs text-ink-muted mt-0.5">
+          <p className="text-xs text-ink-muted mt-0.5 max-w-md">
             Evaluate retrieval latency, semantic caching efficiency, and information retrieval precision.
           </p>
         </div>

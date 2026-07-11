@@ -17,6 +17,7 @@ export default {
           ink: 'var(--color-accent-ink)',
           fg: 'var(--color-accent-fg)',
         },
+        'chart-2': 'var(--color-chart-2)',
       },
       fontFamily: {
         sans: ['"Inter"', 'system-ui', 'sans-serif'],
