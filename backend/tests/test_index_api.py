@@ -50,10 +50,10 @@ def test_delete_document_success(mock_get_qdrant):
 
 @patch("app.metrics.sync_indexed_docs_count")
 @patch("app.retriever.invalidate_retriever_cache")
-@patch("app.cache_manager.CacheManager")
+@patch("app.rag_pipeline.get_cache_manager")
 @patch("app.index_api.get_qdrant_client")
 def test_delete_document_clears_cache_and_invalidates_retriever(
-    mock_get_qdrant, mock_cache_manager_class, mock_invalidate_retriever, mock_sync_count
+    mock_get_qdrant, mock_get_cache_manager, mock_invalidate_retriever, mock_sync_count
 ):
     """Deleting a single document must not serve stale cached answers - it
     should clear the RAG cache and invalidate the cached retriever stack,
@@ -68,7 +68,7 @@ def test_delete_document_clears_cache_and_invalidates_retriever(
     mock_qdrant.scroll.return_value = ([], None)
 
     mock_cache_instance = MagicMock()
-    mock_cache_manager_class.return_value = mock_cache_instance
+    mock_get_cache_manager.return_value = mock_cache_instance
 
     response = client.delete("/documents/delete", params={"filename": "test.pdf"})
 

@@ -407,8 +407,8 @@ def delete_document(filename: str, retry: bool = True):
     # Cached answers may reference the deleted document; wipe cache so stale
     # answers aren't served after the knowledge base changes.
     try:
-        from .cache_manager import CacheManager
-        CacheManager().clear()
+        from .rag_pipeline import get_cache_manager
+        get_cache_manager().clear()
         logger.info("Cache cleared after deleting document '%s'.", safe_name)
     except Exception as e:
         logger.warning(f"Could not clear cache after deleting document: {e}")
@@ -454,8 +454,8 @@ def clear_documents():
 
     # Clear semantic and deep cache to ensure fresh answers for new documents
     try:
-        from .cache_manager import CacheManager
-        CacheManager().clear()
+        from .rag_pipeline import get_cache_manager
+        get_cache_manager().clear()
         logger.info("Semantic and deep cache cleared.")
     except Exception as e:
         logger.warning(f"Could not clear semantic cache: {e}")

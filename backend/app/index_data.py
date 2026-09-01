@@ -213,7 +213,7 @@ def process_pdf_documents(
 
             # 3. Update metadata esensial
             split.metadata.update({
-                "source": file_path,
+                "source": path.name,
                 "source_file": path.name,  # Essential for the /documents API
                 "page_label": page_num,
                 "file_name": path.name
@@ -427,7 +427,7 @@ def index_documents(
                             ),
                             models.FieldCondition(
                                 key="metadata.source",
-                                match=models.MatchValue(value=file_path),
+                                match=models.MatchValue(value=path.name),
                             ),
                         ]
                     )

@@ -452,6 +452,18 @@ async def rag_pipeline_stream_async(query: str, chat_history: list[str]):
                 "sources": [],
                 "metrics": metadata
             }) + "\n"
+            try:
+                log_query(
+                    question=query,
+                    response_time=round(time.monotonic() - total_start, 2),
+                    retrieval_time=retrieval_time,
+                    generation_time=0,
+                    docs_retrieved=0,
+                    chunks_processed=0,
+                    standalone_query=standalone_query,
+                )
+            except Exception:
+                logger.warning("Failed to log empty-retrieval query metrics (stream)", exc_info=True)
             return
 
         yield json.dumps({"step": "reranking"}) + "\n"
