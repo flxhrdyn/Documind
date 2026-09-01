@@ -57,16 +57,17 @@ def test_rag_pipeline_logs_metrics_on_cache_hit():
         }
     }
     
-    with patch("app.rag_pipeline.get_cache_manager") as mock_cache:
-        # Layer 1 hit
+    with patch("app.rag_pipeline.get_cache_manager") as mock_cache, \
+         patch("app.rag_pipeline.rewrite_query", return_value="test question"):
+        # L1 exact cache hit
         mock_cache.return_value.get.return_value = cached_data
-        
+
         rag_pipeline("Test Question", [])
-        
+
         metrics = load_metrics()
         assert metrics["total_queries"] == 1
         assert metrics["query_history"][0]["question"] == "Test Question"
-        assert metrics["query_history"][0]["response_time"] == 0.01 # Should be fixed cache hit time
+        assert metrics["query_history"][0]["response_time"] < 0.1  # Cache hit should be near-instant
         assert metrics["query_history"][0]["docs_retrieved"] == 10
 
 @pytest.mark.asyncio

@@ -18,12 +18,12 @@ def mock_cache_and_embeds():
         yield cache_inst, embedder_inst
 
 def test_rag_pipeline_semantic_hit(mock_cache_and_embeds):
-    """Verify rag_pipeline uses semantic cache when quick/deep cache miss but semantic hit."""
+    """Verify rag_pipeline uses semantic cache when L1 exact cache misses but L2 semantic hits."""
     cache, embedder = mock_cache_and_embeds
-    
-    # 1. Quick cache miss
-    # 2. Deep cache miss
-    cache.get.side_effect = [None, None, {"answer": "Semantic hit answer", "sources": []}]
+
+    # 1. L1 exact cache miss
+    # 2. L2 semantic lookup hit (fetched by its cache key)
+    cache.get.side_effect = [None, {"answer": "Semantic hit answer", "sources": []}]
     
     # Semantic match hit
     cache.get_semantic.return_value = "semantic_deep_key"
@@ -61,8 +61,8 @@ async def test_rag_pipeline_stream_async_semantic_hit(mock_cache_and_embeds):
     """Verify async streaming pipeline uses semantic cache."""
     cache, embedder = mock_cache_and_embeds
     
-    # Quick cache miss, then Deep cache miss, then Semantic hit data retrieval
-    cache.get.side_effect = [None, None, {"answer": "Async semantic hit", "sources": []}]
+    # L1 exact cache miss, then L2 semantic hit data retrieval
+    cache.get.side_effect = [None, {"answer": "Async semantic hit", "sources": []}]
     cache.get_semantic.return_value = "sem_key"
     
     with patch("app.rag_pipeline.rewrite_query_async", return_value="standalone async"):

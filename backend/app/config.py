@@ -124,6 +124,11 @@ RERANK_TOP_K = 7
 # swap reranker models, verify their score distribution and recalibrate this.
 IR_RELEVANCE_THRESHOLD = _env_float("INVENIOAI_IR_RELEVANCE_THRESHOLD", default=0.7, min_value=0.0)
 
+# L2 semantic cache: cosine similarity threshold above which a query is
+# considered "the same" as a previously cached one and served from cache
+# instead of re-running retrieval + generation.
+SEMANTIC_CACHE_THRESHOLD = _env_float("INVENIOAI_SEMANTIC_CACHE_THRESHOLD", default=0.92, min_value=0.0)
+
 # Models
 LLM_MODEL = _env_str("INVENIOAI_LLM_MODEL", "llama-3.1-8b-instant")
 EMBEDDING_MODEL = _env_str("INVENIOAI_EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
