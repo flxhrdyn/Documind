@@ -35,7 +35,7 @@ def preload_reranker() -> None:
     _get_ranker()
 
 
-def rerank(query: str, docs: List[Any]) -> Tuple[List[Any], List[float]]:
+def rerank(query: str, docs: List[Any]) -> Tuple[List[Any], List[float], List[int]]:
     """Return documents ordered by cross-encoder relevance.
 
     Args:
@@ -43,11 +43,14 @@ def rerank(query: str, docs: List[Any]) -> Tuple[List[Any], List[float]]:
         docs: Retrieved documents (LangChain `Document`-like objects).
 
     Returns:
-        Tuple of (ranked_docs, scores). Up to `RERANK_TOP_K` items.
+        Tuple of (ranked_docs, scores, initial_ranks). Up to `RERANK_TOP_K` items.
+        `initial_ranks[i]` is the position `ranked_docs[i]` held in `docs`
+        (the pre-rerank retrieval order) - used to measure nDCG against a
+        ranking genuinely independent of the post-rerank relevance score.
     """
 
     if not docs:
-        return [], []
+        return [], [], []
 
     try:
         # Convert LangChain documents to FlashRank format
@@ -55,22 +58,24 @@ def rerank(query: str, docs: List[Any]) -> Tuple[List[Any], List[float]]:
             {"id": i, "text": doc.page_content, "meta": doc.metadata}
             for i, doc in enumerate(docs)
         ]
-        
+
         rerank_request = RerankRequest(query=query, passages=passages)
         results = _get_ranker().rerank(rerank_request)
-        
+
         # FlashRank results are already sorted by score
         ranked_docs = []
         scores = []
+        initial_ranks = []
         for res in results[:RERANK_TOP_K]:
             doc_id = res["id"]
             ranked_docs.append(docs[doc_id])
             scores.append(round(float(res.get("score", 0.0)), 4))
-            
-        return ranked_docs, scores
-        
+            initial_ranks.append(doc_id)
+
+        return ranked_docs, scores, initial_ranks
+
     except Exception as exc:
         logger.warning("Reranker unavailable; skipping rerank (%s)", exc)
         # Fallback: original order, zero scores
         top_docs = docs[:RERANK_TOP_K]
-        return top_docs, [0.0] * len(top_docs)
+        return top_docs, [0.0] * len(top_docs), list(range(len(top_docs)))

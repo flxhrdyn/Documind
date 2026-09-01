@@ -305,7 +305,7 @@ def _run_rag_pipeline_with_query(standalone_query: str, original_question: str, 
             logger.warning("Failed to log empty-retrieval query metrics", exc_info=True)
         return res
 
-    reranked_docs, retrieval_scores = rerank(standalone_query, retrieved_docs)
+    reranked_docs, retrieval_scores, initial_ranks = rerank(standalone_query, retrieved_docs)
     retrieval_time = time.monotonic() - retrieval_start
 
     context, sources_str, sources_json = format_docs(reranked_docs, retrieval_scores)
@@ -348,6 +348,7 @@ def _run_rag_pipeline_with_query(standalone_query: str, original_question: str, 
             docs_retrieved=len(retrieved_docs),
             chunks_processed=len(reranked_docs),
             retrieval_scores=retrieval_scores,
+            initial_ranks=initial_ranks,
             thoughts=full_thoughts,
             standalone_query=standalone_query,
         )
@@ -454,7 +455,7 @@ async def rag_pipeline_stream_async(query: str, chat_history: list[str]):
             return
 
         yield json.dumps({"step": "reranking"}) + "\n"
-        top_docs, retrieval_scores = rerank(standalone_query, docs)
+        top_docs, retrieval_scores, initial_ranks = rerank(standalone_query, docs)
         metadata["retrieval_scores"] = retrieval_scores
         metadata["reranked_docs"] = len(top_docs)
 
@@ -527,6 +528,7 @@ async def rag_pipeline_stream_async(query: str, chat_history: list[str]):
                 docs_retrieved=len(docs),
                 chunks_processed=len(top_docs),
                 retrieval_scores=metadata.get("retrieval_scores", []),
+                initial_ranks=initial_ranks,
                 thoughts=full_thoughts,
                 standalone_query=standalone_query,
             )

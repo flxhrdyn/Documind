@@ -28,7 +28,7 @@ def test_rag_pipeline_logs_metrics_on_full_run():
         
         mock_build.return_value = (MagicMock(), mock_vectorstore, MagicMock())
         mock_retrieve.return_value = ([Document(page_content="doc1", metadata={"source": "test.pdf"})], {"mode": "dense"})
-        mock_rerank.return_value = ([Document(page_content="doc1", metadata={"source": "test.pdf"})], [0.9])
+        mock_rerank.return_value = ([Document(page_content="doc1", metadata={"source": "test.pdf"})], [0.9], [0])
         
         mock_llm_instance = MagicMock()
         mock_llm_instance.invoke.return_value = MagicMock(content="Real-ish Answer")
@@ -76,7 +76,7 @@ async def test_rag_pipeline_stream_async_logs_metrics():
     with patch("app.rag_pipeline.rewrite_query_async", return_value="standalone"), \
          patch("app.rag_pipeline.build_retriever") as mock_retriever_build, \
          patch("app.rag_pipeline.retrieve_documents_async") as mock_retrieve, \
-         patch("app.rag_pipeline.rerank", return_value=([Document(page_content="doc1", metadata={"source": "test.pdf"})], [0.9])), \
+         patch("app.rag_pipeline.rerank", return_value=([Document(page_content="doc1", metadata={"source": "test.pdf"})], [0.9], [0])), \
          patch("app.rag_pipeline._get_llm") as mock_llm, \
          patch("app.rag_pipeline.get_cache_manager") as mock_cache:
         
