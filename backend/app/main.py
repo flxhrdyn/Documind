@@ -3,9 +3,7 @@
 Wires the API router and exposes two ways to query the RAG pipeline:
 
 - `POST /query` for a simple request/response flow.
-- `POST /query/jobs` for background execution with polling.
-
-Job state is stored in-memory, so it resets on process restart.
+- `POST /query/stream` for Server-Sent Events streaming.
 """
 
 import logging

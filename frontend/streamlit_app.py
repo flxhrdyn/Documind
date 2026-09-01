@@ -871,30 +871,3 @@ if prompt:
                 })
                 st.rerun()
 
-    # 5. Robust Auto-scroll (Observes height changes like expanders)
-    st.markdown("""
-        <script>
-        const scrollTarget = window.parent.document.querySelector('.main .block-container');
-        if (scrollTarget && !window.scrollObserverAttached) {
-            window.scrollObserverAttached = true;
-            let lastHeight = scrollTarget.scrollHeight;
-            
-            const observer = new MutationObserver(() => {
-                const newHeight = scrollTarget.scrollHeight;
-                if (Math.abs(newHeight - lastHeight) > 5) {
-                    // If we are at the bottom, stay at the bottom
-                    const isAtBottom = (scrollTarget.scrollTop + scrollTarget.clientHeight) >= (lastHeight - 50);
-                    if (isAtBottom) {
-                        scrollTarget.scrollTo({ top: newHeight, behavior: 'auto' });
-                    }
-                    lastHeight = newHeight;
-                }
-            });
-            
-            observer.observe(scrollTarget, { childList: true, subtree: true });
-            
-            // Initial scroll for this render
-            scrollTarget.scrollTo({ top: scrollTarget.scrollHeight, behavior: 'smooth' });
-        }
-        </script>
-    """, unsafe_allow_html=True)
