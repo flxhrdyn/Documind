@@ -3,28 +3,16 @@
 
   <h1>InvenioAI — Advanced RAG for Document Q&A</h1>
   <p><b>Hybrid Search, RAG Fusion, and Chain-of-Thought (CoT) Reasoning.</b></p>
-  
-  [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com/)
-  [![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://streamlit.io/)
-  [![LangChain](https://img.shields.io/badge/LangChain-1C3C3C?style=for-the-badge&logo=langchain&logoColor=white)](https://langchain.com/)
-  [![Qdrant](https://img.shields.io/badge/Qdrant-FF4B4B?style=for-the-badge&logo=qdrant&logoColor=white)](https://qdrant.tech/)
-  [![Groq](https://img.shields.io/badge/Groq-Llama_3.1-f3a536?style=for-the-badge&logo=openai&logoColor=white)](https://groq.com/)
-  [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+
+  [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
+  [![FastAPI](https://img.shields.io/badge/FastAPI-005571.svg?logo=fastapi)](https://fastapi.tiangolo.com/)
+  [![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B.svg?logo=streamlit&logoColor=white)](https://streamlit.io/)
+  [![Qdrant](https://img.shields.io/badge/Qdrant-vector%20DB-FF4B4B.svg?logo=qdrant&logoColor=white)](https://qdrant.tech/)
+  [![Groq](https://img.shields.io/badge/Groq-gpt--oss--20b-f3a536.svg?logo=openai&logoColor=white)](https://groq.com/)
+  [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 </div>
 
----
-
-## Overview
-
-In the era of information density, extracting precise answers from large PDF collections is critical. **InvenioAI** is a high-performance **Advanced RAG system** that implements a state-of-the-art **Hybrid architecture**.
-
-It transforms static enterprise PDF documents into a searchable, intelligent knowledge base, allowing users to ask complex questions and receive answers grounded in multi-stage retrieved context with verifiable source citations.
-
-## Live Demo
-
-- **Hugging Face Space**: [https://felixhrdyn-invenioai.hf.space](https://felixhrdyn-invenioai.hf.space)
-
-## 🎬 Demo Video
+A high-performance, hybrid-retrieval RAG system for document Q&A over PDFs. Combines dense + sparse (BM42) search, RAG Fusion multi-query expansion, cross-encoder reranking, and Chain-of-Thought reasoning to answer questions grounded in cited source context.
 
 <div align="center">
   <kbd>
@@ -32,58 +20,112 @@ It transforms static enterprise PDF documents into a searchable, intelligent kno
       Your browser does not support the video tag.
     </video>
   </kbd>
-  <p><i>Interactive Demo: hybrid search retrieval, and multi-stage reasoning.</i></p>
+  <p><i>Interactive demo: hybrid retrieval, reranking, and multi-stage reasoning.</i></p>
 </div>
+
+**Live demo:** [felixhrdyn-invenioai.hf.space](https://felixhrdyn-invenioai.hf.space)
+
+---
+
+## Overview
+
+Extracting precise answers from large PDF collections usually forces a trade-off between naive single-vector search (misses lexical matches, term-specific queries) and heavyweight reranking pipelines that are too slow for interactive use. InvenioAI bridges this by combining:
+
+- **Native hybrid retrieval:** Dense (MMR) + sparse (BM42) search, fused server-side in Qdrant.
+- **RAG Fusion:** Multi-query expansion to capture diverse phrasings of the same intent.
+- **Cross-encoder reranking:** FlashRank (`ms-marco-MiniLM-L-12-v2`) re-scores top candidates before they reach the LLM.
+- **Structured CoT reasoning:** A 4-step protocol (deconstruction, filtering, synthesis, strategy) grounds answers in retrieved context instead of the model's own priors.
+- **2-layer semantic cache:** Exact-match + embedding-similarity cache to skip redundant retrieval/generation on repeated or paraphrased queries.
+
+---
+
+## Quick Start
+
+### 1. Setup
+
+```bash
+python -m venv venv
+source venv/bin/activate        # venv\Scripts\activate on Windows
+pip install -r requirements.txt
+cp .env.example .env            # set GROQ_API_KEY, LLAMA_CLOUD_API_KEY, etc.
+```
+
+### 2. Run
+
+```bash
+# Terminal 1: backend API
+cd backend && uvicorn app.main:app --reload
+
+# Terminal 2: Streamlit UI
+streamlit run frontend/streamlit_app.py
+```
+
+Or run both together (mirrors the Hugging Face Space startup):
+
+```bash
+./start.sh          # Linux/Mac
+run_local.bat        # Windows
+```
+
+### 3. Docker
+
+```bash
+docker build -t invenioai .
+docker run -p 7860:7860 invenioai
+```
+
+A multi-container setup (backend/frontend/redis) is available via `docker-compose.yml`.
+
+---
 
 ## Technical Features
 
 ### Ingestion & Document Processing
-- **Running Header/Footer Elimination**: Position-based boundary analysis that dynamically cleanses repetitive noise (page titles, section lines, and page numbers) from long PDFs without losing structural content.
-- **Structure-Aware Chunking**: Hierarchical text splitting combining `MarkdownHeaderTextSplitter` (heading levels H1-H3) and `RecursiveCharacterTextSplitter` to naturally preserve document outlines in vector payloads.
-- **Cross-Page Context Propagation**: Active header state machine that automatically inherits and propagates parent headings to continuation pages, preventing context starvation during retrieval.
+- **Running header/footer elimination:** Position-based boundary analysis that strips repetitive noise (page titles, section lines, page numbers) from long PDFs without touching structural content.
+- **Structure-aware chunking:** `MarkdownHeaderTextSplitter` (H1-H3) combined with `RecursiveCharacterTextSplitter`, preserving document outline in vector payloads.
+- **Cross-page context propagation:** Active header state machine that inherits and propagates parent headings onto continuation pages, preventing context starvation at retrieval time.
 
 ### Retrieval & Search
-- **Hybrid Search**: Combines dense semantic retrieval (MMR) with server-side sparse vector search (BM42), fused natively in Qdrant for superior accuracy and scalability.
-- **RAG Fusion**: Implements Multi-Query generation to capture diverse user intents and improve retrieval coverage.
-- **Advanced Reranking**: Utilizes Cross-Encoder models (`ms-marco-MiniLM-L-12-v2`) via FlashRank to re-evaluate top candidates, ensuring the most relevant context is provided to the LLM.
+- **Hybrid search:** Dense semantic retrieval (MMR) + server-side sparse vector search (BM42), fused natively in Qdrant.
+- **RAG Fusion:** Multi-query generation to widen retrieval coverage.
+- **Advanced reranking:** Cross-encoder re-evaluation of top candidates via FlashRank before the LLM sees them.
 
 ### Logic & Intelligence
-- **Chain-of-Thought (CoT) Reasoning**: Implements a 4-step structured reasoning protocol (Query Deconstruction, Filtering, Synthesis, Strategy) to ensure grounded and logical answers.
-- **Semantic Caching**: Dual-layer caching strategy (Exact Match + Semantic Similarity > 0.90) to eliminate redundant LLM API calls and provide near-instant responses for paraphrased queries.
+- **Chain-of-Thought reasoning:** 4-step structured protocol (deconstruction, filtering, synthesis, strategy) for grounded, traceable answers.
+- **Semantic caching:** 2-layer strategy (exact match + cosine-similarity > 0.92) that skips redundant LLM calls for repeated or paraphrased queries.
 
 ### Core System & UX
-- **Async Job Orchestration**: Background indexing and query execution with real-time status polling for a smooth user experience.
-- **Deep Analytics Dashboard**: Built-in metrics tracking for retrieval accuracy (nDCG, HitRate), latency, and API usage.
-- **Minimalist UI/UX**: Centered branding with 'Outfit' typography, glassmorphism aesthetics, and a streamlined Knowledge Base management interface.
-- **Cloud-Ready Architecture**: Ships with an all-in-one Docker configuration optimized for Hugging Face Spaces and Azure Container Apps.
+- **Async job orchestration:** Background indexing with real-time status polling.
+- **Analytics dashboard:** Retrieval-quality metrics (nDCG, HitRate, precision/recall/MRR), latency, and API usage.
+- **Cloud-ready:** Single-image Docker build for Hugging Face Spaces / Azure Container Apps, plus a docker-compose split for local multi-container development.
 
+---
 
 ## Technology Stack
 
 ### Backend
-- **Framework**: FastAPI
-- **RAG Engine**: LangChain
-- **PDF Parser**: LlamaParse (High-fidelity Markdown extraction)
-- **LLM**: Llama 3.3 70B & Llama 3.1 8B (Groq Cloud)
-- **Reasoning**: Chain-of-Thought (CoT) structured 4-step protocol
-- **Embedding Model**: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 (Dense)
-- **Sparse Model**: Qdrant/bm42-all-minilm-l6-v2-attentions (Sparse)
-- **Reranker**: FlashRank (ms-marco-MiniLM-L-12-v2 Cross-Encoder)
-- **Search**: Qdrant Native Hybrid (Dense + Sparse) + RAG Fusion (Multi-Query)
-- **Caching**: Dual-Layer Semantic Caching (DiskCache / Redis + NumPy cosine similarity)
+- **Framework:** FastAPI
+- **RAG Engine:** LangChain
+- **PDF Parser:** LlamaParse (high-fidelity Markdown extraction)
+- **LLM:** Groq Cloud (default `openai/gpt-oss-20b`, configurable via `INVENIOAI_LLM_MODEL`)
+- **Embedding Model:** `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (dense)
+- **Sparse Model:** `Qdrant/bm42-all-minilm-l6-v2-attentions`
+- **Reranker:** FlashRank (`ms-marco-MiniLM-L-12-v2` cross-encoder)
+- **Caching:** DiskCache / Redis + NumPy cosine similarity
 
 ### Frontend
-- **Framework**: Streamlit
-- **Visualization**: Plotly, Pandas
-- **Styling**: Vanilla CSS (Custom Design System)
-- **Icons**: Lucide (SVG)
+- **Framework:** Streamlit
+- **Visualization:** Plotly, Pandas
+- **Styling:** Vanilla CSS custom design system
 
 ### Infrastructure
-- **Vector Database**: Qdrant (Local / Server / Cloud)
-- **Deployment**: Docker, GitHub Actions (CI/CD)
-- **Environment**: Python 3.12
+- **Vector Database:** Qdrant (local / server / cloud)
+- **Deployment:** Docker, GitHub Actions CI
+- **Environment:** Python 3.12
 
-## System Architecture
+---
+
+## Architecture
 
 ```mermaid
 graph TD
@@ -91,19 +133,19 @@ graph TD
         PDF[PDF Documents] -->|Upload| API[FastAPI Backend]
         API -->|Chunking| Split[Text Splitter]
     end
-    
+
     subgraph Intelligence_Layer [Processing & RAG]
         Split -->|Dense + Sparse| QDR[Qdrant Vector DB]
-        
+
         API -->|Query Rewriting| Rewriter[Query Rewriter]
-        Rewriter -->|Semantic Lookup| Cache{Semantic Cache}
+        Rewriter -->|Exact + Semantic Lookup| Cache{2-Layer Cache}
         Cache -->|Miss| RAG[Hybrid Retriever]
         Cache -->|Hit| LLM
         RAG -->|Native Hybrid| QDR
         QDR -->|Reranking| Rerank[Cross-Encoder]
-        Rerank -->|Context| LLM["Groq (Llama 3.1) LLM"]
+        Rerank -->|Context| LLM["Groq LLM (CoT)"]
     end
-    
+
     subgraph Presentation_Layer [UI & Analytics]
         UI[Streamlit Dashboard] -->|REST API| API
         LLM -->|Answer| UI
@@ -116,64 +158,30 @@ graph TD
 
 ## Performance & Limits
 
-InvenioAI is optimized for speed and retrieval precision while maintaining low operational costs.
-
-### Core Metrics & Operational Limits
 | Parameter | Value | Description |
 | :--- | :--- | :--- |
-| **Retrieval Mode** | **Native Hybrid** | Dense (MMR) + Sparse (BM42) |
-| **Rerank Top-K** | **5 Docs** | Optimized context window for LLM |
-| **Avg. Response** | **~15s** | Total end-to-end latency (RAG Fusion + Reranking) |
-| **Avg. Retrieval** | **~2s** | Multi-query hybrid search & RRF fusion time |
-
----
-
-## Deployment Guide
-
-### Prerequisites
-*   Python 3.12
-*   Google Groq (Llama 3.3) API Key
-*   Qdrant Instance (Optional, defaults to local storage)
-
-### Execution Procedures
-
-**Step 1: Environment Setup**
-```bash
-python -m venv venv
-source venv/bin/activate  # venv\Scripts\activate on Windows
-pip install -r requirements.txt
-cp .env.example .env
-```
-
-**Step 2: Run Application**
-```bash
-# Terminal 1: Backend API
-uvicorn app.main:app --reload
-
-# Terminal 2: Streamlit UI
-streamlit run frontend/streamlit_app.py
-```
-
-**Step 3: Docker (Production)**
-```bash
-docker build -t invenioai .
-docker run -p 7860:7860 invenioai
-```
+| **Retrieval Mode** | Native Hybrid | Dense (MMR) + Sparse (BM42) |
+| **Rerank Top-K** | 7 docs | Context window handed to the LLM |
+| **Semantic Cache Threshold** | 0.92 cosine | Above this, a query is served from cache |
+| **Avg. Retrieval** | ~2s | Multi-query hybrid search + fusion |
 
 ---
 
 ## Configuration
 
-The application is configured via `.env`. Key variables include:
-- `GROQ_API_KEY`: Required for LLM and Query Rewriting.
-- `QDRANT_URL`: Optional server URL (defaults to local `./qdrant_storage`).
-- `INVENIOAI_ENABLE_HYBRID_SEARCH`: Toggle dense+lexical mode (Default: `1`).
-- `INVENIOAI_DELETE_UPLOADED_PDFS`: Clean up storage after indexing (Default: `0`).
+The application is configured via `.env` (see `.env.example` for the full list). Key variables:
+
+- `GROQ_API_KEY` - required for LLM generation and query rewriting.
+- `LLAMA_CLOUD_API_KEY` - required for PDF parsing during indexing.
+- `QDRANT_URL` / `QDRANT_API_KEY` - optional; defaults to local storage at `backend/qdrant_data/`.
+- `INVENIOAI_LLM_MODEL` - Groq model id (default `llama-3.1-8b-instant`).
+- `INVENIOAI_ENABLE_HYBRID_SEARCH` - toggle dense+sparse mode (default `1`).
+- `INVENIOAI_SEMANTIC_CACHE_THRESHOLD` - L2 cache similarity threshold (default `0.92`).
+- `INVENIOAI_DELETE_UPLOADED_PDFS` - remove local PDFs after indexing (default `0`).
 
 ---
 
-## Author
+## License
 
-**Felix Hardyan**
-*   [GitHub](https://github.com/flxhrdyn)
-*   [Hugging Face](https://huggingface.co/felixhrdyn)
+MIT License. See [LICENSE](LICENSE) for details.
+</content>
