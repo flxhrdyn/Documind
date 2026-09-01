@@ -78,6 +78,41 @@ def test_delete_document_clears_cache_and_invalidates_retriever(
     mock_sync_count.assert_called_once()
 
 
+class TestGetIndexedDocumentNames:
+    """Tests for `get_indexed_document_names` (shared Qdrant scroll helper)."""
+
+    def test_returns_empty_list_when_collection_missing(self):
+        from app.index_api import get_indexed_document_names
+
+        client_mock = MagicMock()
+        client_mock.get_collections.return_value = MagicMock(collections=[])
+
+        assert get_indexed_document_names(client_mock) == []
+        client_mock.scroll.assert_not_called()
+
+    def test_scrolls_all_pages_and_dedupes_by_basename(self):
+        from app.index_api import get_indexed_document_names, QDRANT_COLLECTION
+
+        client_mock = MagicMock()
+        coll = MagicMock()
+        coll.name = QDRANT_COLLECTION
+        client_mock.get_collections.return_value = MagicMock(collections=[coll])
+
+        page1_point = MagicMock()
+        page1_point.payload = {"metadata": {"source_file": "uploaded_docs/report.pdf"}}
+        page2_point = MagicMock()
+        page2_point.payload = {"metadata": {"source_file": "report.pdf"}}
+
+        client_mock.scroll.side_effect = [
+            ([page1_point], "next-offset"),
+            ([page2_point], None),
+        ]
+
+        docs = get_indexed_document_names(client_mock)
+        assert docs == ["report.pdf"]
+        assert client_mock.scroll.call_count == 2
+
+
 class TestFindDuplicateDocument:
     """Tests for `_find_duplicate_document` (content-hash dedup check)."""
 
