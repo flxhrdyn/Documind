@@ -50,10 +50,10 @@ def test_delete_document_success(mock_get_qdrant):
 
 @patch("app.metrics.sync_indexed_docs_count")
 @patch("app.retriever.invalidate_retriever_cache")
-@patch("app.cache_manager.CacheManager")
+@patch("app.rag_pipeline.get_cache_manager")
 @patch("app.index_api.get_qdrant_client")
 def test_delete_document_clears_cache_and_invalidates_retriever(
-    mock_get_qdrant, mock_cache_manager_class, mock_invalidate_retriever, mock_sync_count
+    mock_get_qdrant, mock_get_cache_manager, mock_invalidate_retriever, mock_sync_count
 ):
     """Deleting a single document must not serve stale cached answers - it
     should clear the RAG cache and invalidate the cached retriever stack,
@@ -68,7 +68,7 @@ def test_delete_document_clears_cache_and_invalidates_retriever(
     mock_qdrant.scroll.return_value = ([], None)
 
     mock_cache_instance = MagicMock()
-    mock_cache_manager_class.return_value = mock_cache_instance
+    mock_get_cache_manager.return_value = mock_cache_instance
 
     response = client.delete("/documents/delete", params={"filename": "test.pdf"})
 
@@ -76,6 +76,41 @@ def test_delete_document_clears_cache_and_invalidates_retriever(
     mock_cache_instance.clear.assert_called_once()
     mock_invalidate_retriever.assert_called_once()
     mock_sync_count.assert_called_once()
+
+
+class TestGetIndexedDocumentNames:
+    """Tests for `get_indexed_document_names` (shared Qdrant scroll helper)."""
+
+    def test_returns_empty_list_when_collection_missing(self):
+        from app.index_api import get_indexed_document_names
+
+        client_mock = MagicMock()
+        client_mock.get_collections.return_value = MagicMock(collections=[])
+
+        assert get_indexed_document_names(client_mock) == []
+        client_mock.scroll.assert_not_called()
+
+    def test_scrolls_all_pages_and_dedupes_by_basename(self):
+        from app.index_api import get_indexed_document_names, QDRANT_COLLECTION
+
+        client_mock = MagicMock()
+        coll = MagicMock()
+        coll.name = QDRANT_COLLECTION
+        client_mock.get_collections.return_value = MagicMock(collections=[coll])
+
+        page1_point = MagicMock()
+        page1_point.payload = {"metadata": {"source_file": "uploaded_docs/report.pdf"}}
+        page2_point = MagicMock()
+        page2_point.payload = {"metadata": {"source_file": "report.pdf"}}
+
+        client_mock.scroll.side_effect = [
+            ([page1_point], "next-offset"),
+            ([page2_point], None),
+        ]
+
+        docs = get_indexed_document_names(client_mock)
+        assert docs == ["report.pdf"]
+        assert client_mock.scroll.call_count == 2
 
 
 class TestFindDuplicateDocument:

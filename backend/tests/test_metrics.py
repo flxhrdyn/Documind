@@ -273,3 +273,48 @@ class TestMetricsEdgeCases:
         # Should return default metrics
         metrics = load_metrics()
         assert metrics["total_queries"] == 0
+
+
+class TestNdcgAtK:
+    """nDCG@k must not degenerate to a constant 1.0 for non-ideal rankings."""
+
+    def test_empty_scores_returns_zero(self):
+        from app.metrics import ndcg_at_k
+        assert ndcg_at_k([], k=5) == 0.0
+
+    def test_without_initial_ranks_is_degenerate_by_construction(self):
+        """No independent ordering to compare against -> falls back to the
+        input order, which is already ideal (post-rerank scores are sorted
+        descending), so nDCG is 1.0. This documents *why* the bug existed,
+        not that it's still present when initial_ranks is supplied."""
+        from app.metrics import ndcg_at_k
+        scores = [0.9, 0.7, 0.5, 0.3]
+        assert ndcg_at_k(scores, k=4) == pytest.approx(1.0)
+
+    def test_non_ideal_pre_rerank_order_yields_less_than_one(self):
+        """Post-rerank scores (graded relevance) sorted descending, but the
+        pre-rerank retrieval order (initial_ranks) put the most relevant doc
+        last - nDCG should reflect that this wasn't an ideal serving order."""
+        from app.metrics import ndcg_at_k
+        # scores[i] is the relevance of the doc that was originally retrieved
+        # at position initial_ranks[i]. Here the best doc (score 0.9) was
+        # originally retrieved last (position 3).
+        scores = [0.9, 0.7, 0.5, 0.3]
+        initial_ranks = [3, 2, 1, 0]
+        result = ndcg_at_k(scores, k=4, initial_ranks=initial_ranks)
+        assert 0.0 < result < 1.0
+
+    def test_ideal_pre_rerank_order_yields_one(self):
+        """If the pre-rerank order already matched the ideal relevance
+        order, nDCG should be 1.0."""
+        from app.metrics import ndcg_at_k
+        scores = [0.9, 0.7, 0.5, 0.3]
+        initial_ranks = [0, 1, 2, 3]
+        result = ndcg_at_k(scores, k=4, initial_ranks=initial_ranks)
+        assert result == pytest.approx(1.0)
+
+    def test_mismatched_initial_ranks_length_falls_back(self):
+        from app.metrics import ndcg_at_k
+        scores = [0.9, 0.7, 0.5]
+        result = ndcg_at_k(scores, k=3, initial_ranks=[1, 0])
+        assert result == pytest.approx(1.0)

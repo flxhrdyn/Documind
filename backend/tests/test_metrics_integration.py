@@ -24,7 +24,7 @@ def test_query_updates_metrics():
         # Setup mocks
         mock_build.return_value = (MagicMock(), MagicMock(), MagicMock())
         mock_retrieve.return_value = ([Document(page_content="test", metadata={"source": "test.pdf"})], {"mode": "dense"})
-        mock_rerank.return_value = ([Document(page_content="test", metadata={"source": "test.pdf"})], [0.9])
+        mock_rerank.return_value = ([Document(page_content="test", metadata={"source": "test.pdf"})], [0.9], [0])
         
         mock_llm_inst = MagicMock()
         mock_llm_inst.invoke.return_value = MagicMock(content="AI is cool")

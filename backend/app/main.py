@@ -3,9 +3,7 @@
 Wires the API router and exposes two ways to query the RAG pipeline:
 
 - `POST /query` for a simple request/response flow.
-- `POST /query/jobs` for background execution with polling.
-
-Job state is stored in-memory, so it resets on process restart.
+- `POST /query/stream` for Server-Sent Events streaming.
 """
 
 import logging
@@ -74,48 +72,13 @@ async def lifespan(app: FastAPI):
         try:
             from .qdrant_conn import get_qdrant_client
             from .metrics import sync_indexed_docs_count
-            from .config import QDRANT_COLLECTION
-            
+            from .index_api import get_indexed_document_names
+
             client = get_qdrant_client()
-            
-            # Guard: Check if collection exists before scrolling
-            existing = [c.name for c in client.get_collections().collections]
-            if QDRANT_COLLECTION not in existing:
-                logger.info(f"Collection {QDRANT_COLLECTION} does not exist yet. Skipping reconciliation.")
-                sync_indexed_docs_count(0)
-            else:
-                offset = None
-                unique_files = set()
-                logger.info(f"Starting reconciliation for collection: {QDRANT_COLLECTION}")
-                
-                while True:
-                    points, offset = client.scroll(
-                        collection_name=QDRANT_COLLECTION,
-                        limit=100,
-                        offset=offset,
-                        with_payload=True,
-                        with_vectors=False
-                    )
-                    for p in points:
-                        if p.payload:
-                            # Check common keys for filename
-                            # Note: index_data.py uses 'source_file'
-                            fname = (
-                                p.payload.get("source_file") or 
-                                p.payload.get("file") or 
-                                p.payload.get("filename") or 
-                                p.payload.get("source") or
-                                p.payload.get("metadata", {}).get("source_file") or
-                                p.payload.get("metadata", {}).get("file")
-                            )
-                            if fname:
-                                unique_files.add(fname)
-                    if offset is None:
-                        break
-                
-                count = len(unique_files)
-                logger.info(f"Reconciliation successful: Found {count} unique documents. Syncing metrics.")
-                sync_indexed_docs_count(count)
+            logger.info("Starting reconciliation for collection")
+            count = len(get_indexed_document_names(client))
+            logger.info(f"Reconciliation successful: Found {count} unique documents. Syncing metrics.")
+            sync_indexed_docs_count(count)
         except Exception as e:
             logger.error(f"Critical failure during metrics reconciliation: {e}", exc_info=True)
             
@@ -186,43 +149,10 @@ async def sync_metrics_endpoint():
     try:
         from .qdrant_conn import get_qdrant_client
         from .metrics import sync_indexed_docs_count
-        from .config import QDRANT_COLLECTION
-        
-        client = get_qdrant_client()
-        
-        # Guard: Check if collection exists
-        existing = [c.name for c in client.get_collections().collections]
-        if QDRANT_COLLECTION not in existing:
-            sync_indexed_docs_count(0)
-            return {"status": "success", "count": 0, "message": "Collection does not exist"}
+        from .index_api import get_indexed_document_names
 
-        offset = None
-        unique_files = set()
-        
-        while True:
-            points, offset = client.scroll(
-                collection_name=QDRANT_COLLECTION,
-                limit=100,
-                offset=offset,
-                with_payload=True,
-                with_vectors=False
-            )
-            for p in points:
-                if p.payload:
-                    fname = (
-                        p.payload.get("source_file") or 
-                        p.payload.get("file") or 
-                        p.payload.get("filename") or 
-                        p.payload.get("source") or
-                        p.payload.get("metadata", {}).get("source_file") or
-                        p.payload.get("metadata", {}).get("file")
-                    )
-                    if fname:
-                        unique_files.add(fname)
-            if offset is None:
-                break
-        
-        count = len(unique_files)
+        client = get_qdrant_client()
+        count = len(get_indexed_document_names(client))
         sync_indexed_docs_count(count)
         return {"status": "success", "count": count}
     except Exception as e:

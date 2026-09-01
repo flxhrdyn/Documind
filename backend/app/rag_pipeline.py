@@ -8,12 +8,13 @@ rewrite query → retrieve (dense or hybrid) → rerank → generate answer → 
 from __future__ import annotations
 
 import logging
+import re
 import time
 import hashlib
 from .cache_manager import CacheManager
 from typing import Any
 
-from .config import RETRIEVAL_K
+from .config import RETRIEVAL_K, SEMANTIC_CACHE_THRESHOLD
 from .llm import get_llm as _get_llm
 from .qdrant_conn import close_qdrant_client, is_qdrant_client_closed_error
 from .reranker import rerank
@@ -110,11 +111,10 @@ def get_cache_manager() -> CacheManager:
         _cache_manager = CacheManager()
     return _cache_manager
 
-def _get_cache_key(question: str, history: Any) -> str:
-    """Generate a unique hash key for a query and its history."""
-    hist_str = str(history) if history else ""
-    raw = f"{question.strip().lower()}:{hist_str}"
-    return f"rag_cache:{hashlib.md5(raw.encode()).hexdigest()}"
+def _get_exact_cache_key(standalone_query: str) -> str:
+    """L1 exact-match cache key, keyed on the normalized standalone query."""
+    normalized = standalone_query.strip().lower()
+    return f"rag_exact:{hashlib.md5(normalized.encode()).hexdigest()}"
 
 
 def format_history(history: Any, max_items: int = 5) -> str:
@@ -188,48 +188,46 @@ async def rewrite_query_async(query: str, history: list[str]) -> str:
 
 
 def rag_pipeline(question: str, history: Any) -> dict[str, Any]:
-    """Run the RAG pipeline with two-layer caching."""
+    """Run the RAG pipeline with a 2-layer lean cache (L1 exact, L2 semantic)."""
     total_start = time.monotonic()
     cache = get_cache_manager()
-    quick_key = _get_cache_key(question, history)
-    
-    logger.info(f"Checking RAG Quick Cache: key={quick_key}")
-    cached = cache.get(quick_key)
-    if cached:
-        logger.info(f"RAG Quick Cache HIT for: {question[:50]}")
-        try:
-            log_query(
-                question=question,
-                answer=cached["answer"],
-                response_time=0.01,
-                retrieval_time=0,
-                generation_time=0,
-                docs_retrieved=cached.get("metrics", {}).get("docs_retrieved", 0),
-                chunks_processed=cached.get("metrics", {}).get("chunks_processed", 0),
-                retrieval_scores=cached.get("metrics", {}).get("retrieval_scores", []),
-                thoughts=cached.get("thoughts", ""),
-                standalone_query=question
-            )
-        except Exception:
-            logger.warning("Failed to log cached query metrics", exc_info=True)
-        return cached
 
     max_attempts = 2
     for attempt in range(max_attempts):
         try:
             standalone_query = rewrite_query(question, history)
             logger.info(f"Standalone Query: {standalone_query}")
-            
-            # --- SEMANTIC CACHE CHECK ---
-            # Check for semantically similar queries to avoid redundant RAG processing.
+            exact_key = _get_exact_cache_key(standalone_query)
+
+            cached = cache.get(exact_key)
+            if cached:
+                logger.info(f"RAG L1 Exact Cache HIT for: {standalone_query[:50]}")
+                try:
+                    log_query(
+                        question=question,
+                        answer=cached["answer"],
+                        response_time=round(time.monotonic() - total_start, 2),
+                        retrieval_time=0,
+                        generation_time=0,
+                        docs_retrieved=cached.get("metrics", {}).get("docs_retrieved", 0),
+                        chunks_processed=cached.get("metrics", {}).get("chunks_processed", 0),
+                        retrieval_scores=cached.get("metrics", {}).get("retrieval_scores", []),
+                        thoughts=cached.get("thoughts", ""),
+                        standalone_query=standalone_query
+                    )
+                except Exception:
+                    logger.warning("Failed to log cached query metrics", exc_info=True)
+                return cached
+
+            # L2: semantically similar queries avoid redundant RAG processing.
             embedder = get_embeddings()
             query_embedding = embedder.embed_query(standalone_query)
-            
-            semantic_key = cache.get_semantic(query_embedding, threshold=0.995, query_text=standalone_query)
+
+            semantic_key = cache.get_semantic(query_embedding, threshold=SEMANTIC_CACHE_THRESHOLD, query_text=standalone_query)
             if semantic_key:
                 cached_sem = cache.get(semantic_key)
                 if cached_sem:
-                    logger.info(f"RAG Semantic Cache HIT for: {standalone_query[:50]}")
+                    logger.info(f"RAG L2 Semantic Cache HIT for: {standalone_query[:50]}")
                     try:
                         log_query(
                             question=question,
@@ -245,44 +243,16 @@ def rag_pipeline(question: str, history: Any) -> dict[str, Any]:
                         )
                     except Exception:
                         logger.warning("Failed to log semantic cached query metrics", exc_info=True)
-                    cache.set(quick_key, cached_sem, ttl=3600)
+                    cache.set(exact_key, cached_sem, ttl=3600)
                     return cached_sem
-            # ----------------------------
-            
-            standalone_normalized = standalone_query.strip().lower()
-            standalone_hash = hashlib.md5(standalone_normalized.encode()).hexdigest()
-            deep_key = f"rag_deep_cache:{standalone_hash}"
-            
-            logger.info(f"Checking RAG Deep Cache: query='{standalone_query}', key={deep_key}")
-            cached_deep = cache.get(deep_key)
-            if cached_deep:
-                logger.info(f"RAG Deep Cache HIT for: {standalone_query[:50]}")
-                try:
-                    log_query(
-                        question=question,
-                        answer=cached_deep["answer"],
-                        response_time=round(time.monotonic() - total_start, 2),
-                        retrieval_time=0,
-                        generation_time=0,
-                        docs_retrieved=cached_deep.get("metrics", {}).get("docs_retrieved", 0),
-                        chunks_processed=cached_deep.get("metrics", {}).get("chunks_processed", 0),
-                        retrieval_scores=cached_deep.get("metrics", {}).get("retrieval_scores", []),
-                        thoughts=cached_deep.get("thoughts", ""),
-                        standalone_query=standalone_query
-                    )
-                except Exception:
-                    logger.warning("Failed to log deep cached query metrics", exc_info=True)
-                cache.set(quick_key, cached_deep, ttl=3600)
-                return cached_deep
 
             result = _run_rag_pipeline_with_query(standalone_query, question, history)
             # Don't cache "nothing relevant found" - retrieval may succeed once
             # more documents are indexed later (mirrors the streaming path,
             # which also skips caching on empty retrieval).
             if result.get("metrics", {}).get("docs_retrieved", 0) > 0:
-                cache.set(deep_key, result, ttl=3600)
-                cache.set(quick_key, result, ttl=3600)
-                cache.add_semantic(query_embedding, deep_key, query_text=standalone_query)
+                cache.set(exact_key, result, ttl=3600)
+                cache.add_semantic(query_embedding, exact_key, query_text=standalone_query)
             return result
         except Exception as exc:
             if attempt < (max_attempts - 1) and is_qdrant_client_closed_error(exc):
@@ -335,25 +305,22 @@ def _run_rag_pipeline_with_query(standalone_query: str, original_question: str, 
             logger.warning("Failed to log empty-retrieval query metrics", exc_info=True)
         return res
 
-    reranked_docs, retrieval_scores = rerank(standalone_query, retrieved_docs)
+    reranked_docs, retrieval_scores, initial_ranks = rerank(standalone_query, retrieved_docs)
     retrieval_time = time.monotonic() - retrieval_start
 
     context, sources_str, sources_json = format_docs(reranked_docs, retrieval_scores)
     prompt = RAG_PROMPT.format(context=context, question=original_question, sources=sources_str)
 
     generation_start = time.monotonic()
-    
-    # Handle thinking in non-streaming mode
-    parser = ThinkingParser()
+
+    # Non-streaming mode gets the full response in one shot, so a plain
+    # regex extraction is enough - no need for the incremental ThinkingParser
+    # used by the streaming path.
     raw_answer = _get_llm().invoke(prompt).content
-    full_answer = ""
-    full_thoughts = ""
-    for msg_type, content in parser.feed(raw_answer):
-        if msg_type == "thinking":
-            full_thoughts += content
-        else:
-            full_answer += content
-    
+    thinking_match = re.search(r"<thinking>(.*?)</thinking>", raw_answer, re.DOTALL)
+    full_thoughts = thinking_match.group(1).strip() if thinking_match else ""
+    full_answer = re.sub(r"<thinking>.*?</thinking>", "", raw_answer, flags=re.DOTALL).strip()
+
     generation_time = time.monotonic() - generation_start
     total_time = time.monotonic() - total_start
 
@@ -381,6 +348,7 @@ def _run_rag_pipeline_with_query(standalone_query: str, original_question: str, 
             docs_retrieved=len(retrieved_docs),
             chunks_processed=len(reranked_docs),
             retrieval_scores=retrieval_scores,
+            initial_ranks=initial_ranks,
             thoughts=full_thoughts,
             standalone_query=standalone_query,
         )
@@ -393,52 +361,51 @@ def _run_rag_pipeline_with_query(standalone_query: str, original_question: str, 
 async def rag_pipeline_stream_async(query: str, chat_history: list[str]):
     total_start = time.monotonic()
     cache = get_cache_manager()
-    quick_key = _get_cache_key(query, chat_history)
-
-    logger.info(f"Stream: Checking Quick Cache: key={quick_key}")
-    cached = cache.get(quick_key)
-    if cached:
-        logger.info("Stream: Quick Cache HIT")
-        yield json.dumps({"step": "cached", "answer": cached["answer"]}) + "\n"
-        yield json.dumps({
-            "step": "done",
-            "answer": cached["answer"],
-            "thoughts": cached.get("thoughts", ""),
-            "sources": cached["sources"],
-            "metrics": cached.get("metrics", {})
-        }) + "\n"
-        
-        try:
-            log_query(
-                question=query,
-                response_time=0.01,
-                answer_length=len(cached.get("answer", "")),
-                retrieval_time=0,
-                generation_time=0,
-                docs_retrieved=cached.get("metrics", {}).get("docs_retrieved", 0),
-                chunks_processed=cached.get("metrics", {}).get("chunks_processed", 0),
-                retrieval_scores=cached.get("metrics", {}).get("retrieval_scores", []),
-                thoughts=cached.get("thoughts", ""),
-                standalone_query=query,
-            )
-        except Exception:
-            pass
-        return
 
     try:
         yield json.dumps({"step": "rewriting"}) + "\n"
         standalone_query = await rewrite_query_async(query, chat_history)
         logger.info(f"Stream Standalone Query: {standalone_query}")
-        
-        # --- SEMANTIC CACHE CHECK ---
+        exact_key = _get_exact_cache_key(standalone_query)
+
+        cached = cache.get(exact_key)
+        if cached:
+            logger.info("Stream: L1 Exact Cache HIT")
+            yield json.dumps({"step": "cached", "answer": cached["answer"]}) + "\n"
+            yield json.dumps({
+                "step": "done",
+                "answer": cached["answer"],
+                "thoughts": cached.get("thoughts", ""),
+                "sources": cached["sources"],
+                "metrics": cached.get("metrics", {})
+            }) + "\n"
+
+            try:
+                log_query(
+                    question=query,
+                    response_time=round(time.monotonic() - total_start, 2),
+                    answer_length=len(cached.get("answer", "")),
+                    retrieval_time=0,
+                    generation_time=0,
+                    docs_retrieved=cached.get("metrics", {}).get("docs_retrieved", 0),
+                    chunks_processed=cached.get("metrics", {}).get("chunks_processed", 0),
+                    retrieval_scores=cached.get("metrics", {}).get("retrieval_scores", []),
+                    thoughts=cached.get("thoughts", ""),
+                    standalone_query=standalone_query,
+                )
+            except Exception:
+                pass
+            return
+
+        # L2: semantically similar queries avoid redundant RAG processing.
         embedder = get_embeddings()
         query_embedding = embedder.embed_query(standalone_query)
-        
-        semantic_key = cache.get_semantic(query_embedding, threshold=0.995, query_text=standalone_query)
+
+        semantic_key = cache.get_semantic(query_embedding, threshold=SEMANTIC_CACHE_THRESHOLD, query_text=standalone_query)
         if semantic_key:
             cached_sem = cache.get(semantic_key)
             if cached_sem:
-                logger.info("Stream: Semantic Cache HIT")
+                logger.info("Stream: L2 Semantic Cache HIT")
                 yield json.dumps({"step": "cached", "answer": cached_sem["answer"]}) + "\n"
                 yield json.dumps({
                     "step": "done",
@@ -447,11 +414,11 @@ async def rag_pipeline_stream_async(query: str, chat_history: list[str]):
                     "sources": cached_sem["sources"],
                     "metrics": cached_sem.get("metrics", {})
                 }) + "\n"
-                
+
                 try:
                     log_query(
                         question=query,
-                        response_time=time.monotonic() - total_start,
+                        response_time=round(time.monotonic() - total_start, 2),
                         answer_length=len(cached_sem["answer"]),
                         retrieval_time=0,
                         generation_time=0,
@@ -460,39 +427,8 @@ async def rag_pipeline_stream_async(query: str, chat_history: list[str]):
                     )
                 except Exception:
                     pass
-                cache.set(quick_key, cached_sem, ttl=3600)
+                cache.set(exact_key, cached_sem, ttl=3600)
                 return
-        # ----------------------------
-        
-        standalone_normalized = standalone_query.strip().lower()
-        standalone_hash = hashlib.md5(standalone_normalized.encode()).hexdigest()
-        deep_key = f"rag_deep_cache:{standalone_hash}"
-        logger.info(f"Stream: Checking Deep Cache: query='{standalone_query}', key={deep_key}")
-        cached_deep = cache.get(deep_key)
-        if cached_deep:
-            logger.info("Stream: Deep Cache HIT")
-            yield json.dumps({"step": "cached"}) + "\n"
-            yield json.dumps({
-                "step": "done",
-                "answer": cached_deep["answer"],
-                "thoughts": cached_deep.get("thoughts", ""),
-                "sources": cached_deep["sources"],
-                "metrics": cached_deep.get("metrics", {})
-            }) + "\n"
-            
-            try:
-                log_query(
-                    question=query,
-                    response_time=time.monotonic() - total_start,
-                    answer_length=len(cached_deep["answer"]),
-                    retrieval_time=0,
-                    generation_time=0,
-                    thoughts=cached_deep.get("thoughts", ""),
-                    standalone_query=standalone_query,
-                )
-            except Exception:
-                pass
-            return
 
         yield json.dumps({"step": "retrieving", "query": standalone_query}) + "\n"
         retriever, vectorstore, client = build_retriever()
@@ -516,10 +452,22 @@ async def rag_pipeline_stream_async(query: str, chat_history: list[str]):
                 "sources": [],
                 "metrics": metadata
             }) + "\n"
+            try:
+                log_query(
+                    question=query,
+                    response_time=round(time.monotonic() - total_start, 2),
+                    retrieval_time=retrieval_time,
+                    generation_time=0,
+                    docs_retrieved=0,
+                    chunks_processed=0,
+                    standalone_query=standalone_query,
+                )
+            except Exception:
+                logger.warning("Failed to log empty-retrieval query metrics (stream)", exc_info=True)
             return
 
         yield json.dumps({"step": "reranking"}) + "\n"
-        top_docs, retrieval_scores = rerank(standalone_query, docs)
+        top_docs, retrieval_scores, initial_ranks = rerank(standalone_query, docs)
         metadata["retrieval_scores"] = retrieval_scores
         metadata["reranked_docs"] = len(top_docs)
 
@@ -577,10 +525,8 @@ async def rag_pipeline_stream_async(query: str, chat_history: list[str]):
             "sources": sources_json,
             "metrics": final_result["metrics"]
         }
-        cache.set(deep_key, cache_data, ttl=3600)
-        cache.set(quick_key, cache_data, ttl=3600)
-        # Store in semantic cache
-        cache.add_semantic(query_embedding, deep_key, query_text=standalone_query)
+        cache.set(exact_key, cache_data, ttl=3600)
+        cache.add_semantic(query_embedding, exact_key, query_text=standalone_query)
         
         yield json.dumps(final_result) + "\n"
 
@@ -594,6 +540,7 @@ async def rag_pipeline_stream_async(query: str, chat_history: list[str]):
                 docs_retrieved=len(docs),
                 chunks_processed=len(top_docs),
                 retrieval_scores=metadata.get("retrieval_scores", []),
+                initial_ranks=initial_ranks,
                 thoughts=full_thoughts,
                 standalone_query=standalone_query,
             )

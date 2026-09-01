@@ -14,7 +14,7 @@ import threading
 import time
 import uuid
 from typing import Any, Dict, Literal, Optional, Callable, Tuple
-from qdrant_client import models
+from qdrant_client import QdrantClient, models
 
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 
@@ -279,6 +279,36 @@ def get_upload_job(job_id: str):
     return job
 
 
+def get_indexed_document_names(client: QdrantClient) -> list[str]:
+    """Scroll the whole collection and collect unique indexed document names.
+
+    No artificial point cap - scrolls until Qdrant returns offset=None.
+    """
+    existing = [c.name for c in client.get_collections().collections]
+    if QDRANT_COLLECTION not in existing:
+        return []
+
+    documents: set[str] = set()
+    offset = None
+    while True:
+        points, offset = client.scroll(
+            collection_name=QDRANT_COLLECTION,
+            limit=500,
+            with_payload=True,
+            with_vectors=False,
+            offset=offset,
+        )
+        for p in points:
+            payload = getattr(p, "payload", None) or {}
+            meta = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else payload
+            source = meta.get("source_file") or meta.get("file") or meta.get("source") or meta.get("filename")
+            if source and isinstance(source, str):
+                documents.add(os.path.basename(source))
+        if offset is None:
+            break
+    return sorted(documents)
+
+
 @router.get("/documents")
 def list_documents():
     """List indexed document names.
@@ -289,61 +319,12 @@ def list_documents():
 
     client = get_qdrant_client()
     try:
-        existing = [c.name for c in client.get_collections().collections]
+        documents = get_indexed_document_names(client)
     except Exception as exc:
         logger.exception("Failed to list Qdrant collections")
         raise HTTPException(status_code=500, detail=f"Failed to query Qdrant: {type(exc).__name__}: {exc}")
-    if QDRANT_COLLECTION not in existing:
-        return {"documents": [], "count": 0}
 
-    documents: set[str] = set()
-
-    next_offset = None
-    max_points = 5000
-    seen_points = 0
-
-    while True:
-        try:
-            points, next_offset = client.scroll(
-                collection_name=QDRANT_COLLECTION,
-                limit=1000,
-                with_payload=["metadata.source_file", "metadata.source"],
-                with_vectors=False,
-                offset=next_offset,
-            )
-        except Exception as exc:
-            # If collection is deleted while scrolling, just return what we have (or empty)
-            if "not found" in str(exc).lower() or "doesn't exist" in str(exc).lower():
-                break
-            logger.exception("Failed to scroll Qdrant collection")
-            raise HTTPException(status_code=500, detail=f"Failed to query Qdrant: {type(exc).__name__}: {exc}")
-
-        if not points:
-            break
-
-        for p in points:
-            payload = getattr(p, "payload", None) or {}
-            if not isinstance(payload, dict):
-                continue
-
-            meta = payload.get("metadata")
-            source = None
-            if isinstance(meta, dict):
-                # Prioritize our custom source_file basename
-                source = meta.get("source_file") or meta.get("source")
-            if not source:
-                source = payload.get("source_file") or payload.get("source")
-
-            if isinstance(source, str) and source:
-                documents.add(os.path.basename(source))
-
-        seen_points += len(points)
-        if next_offset is None:
-            break
-        if seen_points >= max_points:
-            break
-
-    return {"documents": sorted(documents), "count": len(documents)}
+    return {"documents": documents, "count": len(documents)}
 
 
 
@@ -426,8 +407,8 @@ def delete_document(filename: str, retry: bool = True):
     # Cached answers may reference the deleted document; wipe cache so stale
     # answers aren't served after the knowledge base changes.
     try:
-        from .cache_manager import CacheManager
-        CacheManager().clear()
+        from .rag_pipeline import get_cache_manager
+        get_cache_manager().clear()
         logger.info("Cache cleared after deleting document '%s'.", safe_name)
     except Exception as e:
         logger.warning(f"Could not clear cache after deleting document: {e}")
@@ -473,8 +454,8 @@ def clear_documents():
 
     # Clear semantic and deep cache to ensure fresh answers for new documents
     try:
-        from .cache_manager import CacheManager
-        CacheManager().clear()
+        from .rag_pipeline import get_cache_manager
+        get_cache_manager().clear()
         logger.info("Semantic and deep cache cleared.")
     except Exception as e:
         logger.warning(f"Could not clear semantic cache: {e}")

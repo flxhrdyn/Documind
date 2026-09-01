@@ -85,6 +85,7 @@ def log_query(
     docs_retrieved: int = 0,
     chunks_processed: int = 0,
     retrieval_scores: Optional[List[float]] = None,
+    initial_ranks: Optional[List[int]] = None,
     thoughts: str = "",
     answer: str = "",
     standalone_query: str = "",
@@ -117,6 +118,7 @@ def log_query(
             "docs_retrieved": docs_retrieved,
             "chunks_processed": chunks_processed,
             "retrieval_scores": retrieval_scores or [],
+            "initial_ranks": initial_ranks or [],
             "thoughts": thoughts,
             "standalone_query": standalone_query,
         })
@@ -250,16 +252,33 @@ def mrr(scores: List[float], threshold: float = IR_RELEVANCE_THRESHOLD) -> float
     return 0.0
 
 
-def ndcg_at_k(scores: List[float], k: int) -> float:
-    """nDCG@k: uses raw similarity scores as graded relevance."""
+def ndcg_at_k(scores: List[float], k: int, initial_ranks: Optional[List[int]] = None) -> float:
+    """nDCG@k: post-rerank scores as graded relevance.
+
+    `scores` is already sorted descending by rerank score (FlashRank's output
+    order), so comparing it to itself sorted descending is a no-op and nDCG
+    is trivially always 1.0. `initial_ranks[i]` is the position doc `i` (in
+    `scores` order) held in the pre-rerank retrieval order - a serving order
+    genuinely independent of the relevance grade. When available, DCG is
+    computed over that pre-rerank order instead, benchmarked against the
+    ideal (score-sorted) ordering for IDCG. Without it, falls back to the
+    degenerate 1.0 (no independent ordering to score).
+    """
     if not scores:
         return 0.0
-    top_k = scores[:k]
-    # Small epsilon to avoid issues with zero scores
-    dcg = sum(rel / math.log2(i + 2) for i, rel in enumerate(top_k))
     ideal = sorted(scores, reverse=True)[:k]
     idcg = sum(rel / math.log2(i + 2) for i, rel in enumerate(ideal))
-    return (dcg / idcg) if idcg > 0 else 0.0
+    if idcg == 0:
+        return 0.0
+
+    if initial_ranks and len(initial_ranks) == len(scores):
+        pre_rerank_order = sorted(range(len(scores)), key=lambda i: initial_ranks[i])
+        actual = [scores[i] for i in pre_rerank_order][:k]
+    else:
+        actual = scores[:k]
+
+    dcg = sum(rel / math.log2(i + 2) for i, rel in enumerate(actual))
+    return dcg / idcg
 
 
 def hit_rate_at_k(scores: List[float], k: int, threshold: float = IR_RELEVANCE_THRESHOLD) -> float:
@@ -294,7 +313,7 @@ def compute_ir_metrics(
         p_vals.append(precision_at_k(s, k, threshold))
         r_vals.append(recall_at_k(s, k, threshold))
         mrr_vals.append(mrr(s, threshold))
-        ndcg_vals.append(ndcg_at_k(s, k))
+        ndcg_vals.append(ndcg_at_k(s, k, initial_ranks=q.get("initial_ranks")))
         hr_vals.append(hit_rate_at_k(s, k, threshold))
 
     n = len(entries_with_scores)
@@ -327,7 +346,7 @@ def per_query_ir_metrics(
             "precision": round(precision_at_k(s, k, threshold), 4) if s else None,
             "recall": round(recall_at_k(s, k, threshold), 4) if s else None,
             "mrr": round(mrr(s, threshold), 4) if s else None,
-            "ndcg": round(ndcg_at_k(s, k), 4) if s else None,
+            "ndcg": round(ndcg_at_k(s, k, initial_ranks=q.get("initial_ranks")), 4) if s else None,
             "hit_rate": round(hit_rate_at_k(s, k, threshold), 4) if s else None,
         })
     return rows

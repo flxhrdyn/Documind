@@ -44,9 +44,7 @@ def reset_vector_db():
     
     client.create_collection(
         collection_name=QDRANT_COLLECTION,
-        vectors_config={
-            "dense": models.VectorParams(size=vector_size, distance=models.Distance.COSINE)
-        },
+        vectors_config=models.VectorParams(size=vector_size, distance=models.Distance.COSINE),
         sparse_vectors_config={
             "sparse": models.SparseVectorParams()
         }
