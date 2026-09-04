@@ -6,6 +6,7 @@ backend URL with `INVENIOAI_API_BASE_URL` (defaults to `http://localhost:8000`).
 
 import json
 import os
+import threading
 import time
 
 import requests
@@ -768,91 +769,130 @@ if _is_chat_active():
                                 # Wrap in a div to allow horizontal scrolling if tables are wide.
                                 st.markdown(f'<div style="overflow-x: auto;">\n{text.strip()}\n</div>', unsafe_allow_html=True)
 
-def run_streaming_query(prompt: str, history: list[str]):
-    """Consume the SSE stream from the backend and update the UI in real-time."""
-    
-    with st.chat_message("assistant"):
-        thought_container = st.status("🧠 Thinking...", expanded=True)
-        answer_placeholder = st.empty()
-        full_answer = ""
-        sources = []
-        thoughts = []
-        
-        try:
-            # Use stream=True to handle SSE
-            response = requests.post(
-                f"{API_BASE_URL}/query/stream",
-                json={"question": prompt, "history": history},
-                headers=API_HEADERS,
-                stream=True,
-                timeout=(5, QUERY_READ_TIMEOUT_SECONDS),  # 5s to connect
-            )
-            response.raise_for_status()
-            
-            for line in response.iter_lines():
-                if not line:
-                    continue
-                
-                line_str = line.decode("utf-8")
-                if not line_str.startswith("data: "):
-                    continue
-                
-                try:
-                    data = json.loads(line_str[6:])
-                    step = data.get("step")
-                    
+def _stream_query_worker(
+    prompt: str,
+    history: list[str],
+    state: dict,
+    cancel_event: threading.Event,
+    state_lock: threading.Lock,
+) -> None:
+    """Runs in a background thread so the main script stays free to render a
+    Stop button and react to its click - a plain synchronous loop in the main
+    thread cannot be interrupted mid-stream in Streamlit's execution model.
+
+    All mutations to `state` go through `state_lock` so the polling fragment
+    never reads a dict mid-mutation (clicking Stop mid-stream was racing the
+    fragment's read against this thread's writes and hanging the tab)."""
+    response = None
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/query/stream",
+            json={"question": prompt, "history": history},
+            headers=API_HEADERS,
+            stream=True,
+            timeout=(5, QUERY_READ_TIMEOUT_SECONDS),  # 5s to connect
+        )
+        response.raise_for_status()
+
+        for line in response.iter_lines():
+            if cancel_event.is_set():
+                with state_lock:
+                    state["cancelled"] = True
+                break
+
+            if not line:
+                continue
+
+            line_str = line.decode("utf-8")
+            if not line_str.startswith("data: "):
+                continue
+
+            try:
+                data = json.loads(line_str[6:])
+                step = data.get("step")
+
+                with state_lock:
                     if step == "cached":
-                        thought_container.update(label="⚡ Serving from cache...", state="running")
+                        state["label"] = "⚡ Serving from cache..."
                     elif step == "rewriting":
-                        thought_container.update(label="🔍 Rewriting query for context...")
+                        state["label"] = "🔍 Rewriting query for context..."
                     elif step == "retrieving":
-                        thought_container.update(label="🛰️ Searching document library...")
+                        state["label"] = "🛰️ Searching document library..."
                     elif step == "reranking":
-                        thought_container.update(label="🎯 Ranking relevant chunks...")
+                        state["label"] = "🎯 Ranking relevant chunks..."
                     elif step == "generating":
-                        thought_container.update(label="🧠 Synthesizing answer...")
+                        state["label"] = "🧠 Synthesizing answer..."
                     elif step == "thinking":
                         content = data.get("content", "")
-                        # We accumulate thoughts (ONLY CoT content)
-                        thoughts.append(content)
-                        
-                        # Update loading status label with a snippet
+                        state["thoughts"].append(content)
                         snippet = content.strip().replace("\n", " ")[:80]
                         if snippet:
-                            # Highlight Step transitions
-                            if "Step " in snippet:
-                                thought_container.update(label=f"⚙️ {snippet}")
-                            else:
-                                thought_container.update(label=f"🧠 {snippet}...")
+                            state["label"] = f"⚙️ {snippet}" if "Step " in snippet else f"🧠 {snippet}..."
                     elif step == "token":
-                        content = data.get("content", "")
-                        full_answer += content
-                        # Collapse thoughts once we start generating heavily
-                        thought_container.update(label="✅ Reasoning Complete", state="complete", expanded=False)
-                        answer_placeholder.markdown(full_answer + " ▌")
+                        state["answer"] += data.get("content", "")
+                        state["label"] = "✅ Reasoning Complete"
+                        state["status_state"] = "complete"
                     elif step == "done":
-                        full_answer = data.get("answer", full_answer)
-                        sources = data.get("sources", [])
+                        state["answer"] = data.get("answer", state["answer"])
+                        state["sources"] = data.get("sources", [])
                         backend_thoughts = data.get("thoughts")
-                        
-                        # Store only the CoT content as thoughts
-                        thoughts = backend_thoughts if backend_thoughts else "".join(thoughts)
-
-                        answer_placeholder.markdown(full_answer)
-                        thought_container.update(label="✅ Reasoning Complete", state="complete", expanded=False)
+                        state["thoughts"] = backend_thoughts if backend_thoughts else "".join(state["thoughts"])
+                        state["label"] = "✅ Reasoning Complete"
+                        state["status_state"] = "complete"
                     elif step == "error":
-                        error_msg = data.get("message", "Unknown backend error")
-                        st.error(f"❌ **Pipeline Error:** {error_msg}")
-                        thought_container.update(label="❌ Error in Pipeline", state="error")
-                        return None, [], []
-                except json.JSONDecodeError:
-                    continue
-            
-            return full_answer, sources, thoughts
+                        state["error"] = data.get("message", "Unknown backend error")
+                        state["status_state"] = "error"
+            except json.JSONDecodeError:
+                continue
 
-        except requests.exceptions.RequestException as e:
-            st.error(format_error_message(e))
-            return None, [], []
+        if cancel_event.is_set() and response is not None:
+            response.close()
+    except requests.exceptions.RequestException as e:
+        with state_lock:
+            state["error"] = format_error_message(e)
+    finally:
+        with state_lock:
+            state["done"] = True
+
+
+@st.fragment(run_every=0.25)
+def _render_streaming_answer() -> None:
+    state = st.session_state.get("stream_state")
+    if state is None:
+        return
+
+    state_lock = st.session_state.stream_state_lock
+    with state_lock:
+        state = dict(state)  # snapshot - render off a stable copy, not the live dict
+
+    with st.chat_message("assistant"):
+        status_state = "error" if state["error"] else state["status_state"]
+        st.status(state["label"], state=status_state, expanded=(status_state == "running"))
+        if not state["done"]:
+            stopping = st.session_state.get("stream_stop_requested", False)
+            if st.button("⏹️ Stop generating", key="stop_generation_btn", disabled=stopping):
+                st.session_state.stream_stop_requested = True
+                st.session_state.stream_cancel_event.set()
+        if state["error"]:
+            st.error(f"❌ **Pipeline Error:** {state['error']}")
+        elif state["answer"]:
+            st.markdown(state["answer"] + ("" if state["done"] else " ▌"))
+        if state["done"] and state["cancelled"] and state["answer"]:
+            st.caption("⏹️ Generation stopped early by user.")
+
+    if state["done"]:
+        if not state["error"] and state["answer"]:
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": state["answer"],
+                "sources": state["sources"],
+                "thoughts": state["thoughts"],
+            })
+        st.session_state.stream_state = None
+        st.session_state.pop("stream_cancel_event", None)
+        st.session_state.pop("stream_state_lock", None)
+        st.session_state.pop("stream_stop_requested", None)
+        st.rerun()
 
 
 # Input
@@ -883,14 +923,28 @@ if prompt:
                 for m in st.session_state.messages[:-1]
             ]
 
-            answer, sources, thoughts = run_streaming_query(prompt, formatted_history)
+            cancel_event = threading.Event()
+            state_lock = threading.Lock()
+            stream_state = {
+                "answer": "",
+                "sources": [],
+                "thoughts": [],
+                "label": "🧠 Thinking...",
+                "status_state": "running",
+                "error": None,
+                "cancelled": False,
+                "done": False,
+            }
+            st.session_state.stream_state = stream_state
+            st.session_state.stream_cancel_event = cancel_event
+            st.session_state.stream_state_lock = state_lock
+            st.session_state.stream_stop_requested = False
+            threading.Thread(
+                target=_stream_query_worker,
+                args=(prompt, formatted_history, stream_state, cancel_event, state_lock),
+                daemon=True,
+            ).start()
 
-            if answer:
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": answer,
-                    "sources": sources,
-                    "thoughts": thoughts
-                })
-                st.rerun()
+if st.session_state.get("stream_state") is not None:
+    _render_streaming_answer()
 
