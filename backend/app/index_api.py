@@ -218,7 +218,7 @@ def _run_upload_job(job_id: str, file_path: str, content_hash: str) -> None:
     except HTTPException as exc:
         now = time.time()
         job["status"] = "failed"
-        job["error"] = f"HTTP {exc.status_code}: {exc.detail}"
+        job["error"] = str(exc.detail)
         job["updated_at"] = now
         _set_upload_job(job)
     except Exception as exc:

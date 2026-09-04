@@ -276,6 +276,13 @@ header {{
     background-color: transparent !important;
 }}
 
+/* ── Chat Input Focus (override default red focus ring with brand accent) ── */
+[data-testid="stChatInput"] textarea:focus,
+[data-testid="stChatInput"]:focus-within {{
+    border-color: var(--invenio-accent) !important;
+    box-shadow: 0 0 0 1px var(--invenio-accent) !important;
+}}
+
 /* ── Chat Message Styling ── */
 [data-testid="stChatMessage"] {{
     background-color: var(--invenio-bg-secondary) !important;
@@ -500,11 +507,11 @@ def _render_upload_job_status(
     if status == "indexing":
         status_slot.info(f"{label} is being saved to vector store... ({elapsed_seconds:.0f}s){eta_suffix}")
         return
-    if status == "succeeded":
-        status_slot.success(f"{label} indexing completed.")
-        return
-    if status == "failed":
-        status_slot.error(f"{label} indexing failed.")
+    if status in ("succeeded", "failed"):
+        # Terminal states: leave the final st.success/st.error (rendered by the
+        # caller with the full detail message) as the only notice, instead of
+        # duplicating a generic one here first.
+        status_slot.empty()
         return
 
     status_slot.info(f"{label} status: {status} ({elapsed_seconds:.0f}s)")
@@ -570,6 +577,7 @@ with st.sidebar:
 
     uploaded_file = st.file_uploader(
         f"Add documents to build your AI knowledge base (max {MAX_UPLOAD_SIZE_MB}MB)",
+        key=f"pdf_uploader_{st.session_state.get('pdf_uploader_gen', 0)}",
         type=["pdf"],
     )
     if uploaded_file:
@@ -592,6 +600,7 @@ with st.sidebar:
                         st.success(message)
                         if "docs_cache" in st.session_state:
                             del st.session_state.docs_cache
+                        st.session_state.pdf_uploader_gen = st.session_state.get("pdf_uploader_gen", 0) + 1
                         st.rerun()
                     else:
                         if "still running in the background" in message:
@@ -606,24 +615,37 @@ with st.sidebar:
     indexed_files, backend_reachable = get_indexed_files()
     if indexed_files:
         for f in indexed_files:
-            col1, col2 = st.columns([0.8, 0.2])
-            with col1:
-                st.write(f"📄 {f}")
-            with col2:
-                if st.button("🗑️", key=f"del_{f}"):
-                    try:
-                        resp = requests.delete(
-                            f"{API_BASE_URL}/documents/delete",
-                            params={"filename": f},
-                            headers=API_HEADERS,
-                            timeout=30,
-                        )
-                        resp.raise_for_status()
-                        if "docs_cache" in st.session_state:
-                            del st.session_state.docs_cache
+            if st.session_state.get("confirm_delete_doc") == f:
+                st.warning(f"Delete **{f}**? This cannot be undone.")
+                confirm_col1, confirm_col2 = st.columns(2)
+                with confirm_col1:
+                    if st.button("✅ Yes", key=f"del_yes_{f}", width="stretch"):
+                        try:
+                            resp = requests.delete(
+                                f"{API_BASE_URL}/documents/delete",
+                                params={"filename": f},
+                                headers=API_HEADERS,
+                                timeout=30,
+                            )
+                            resp.raise_for_status()
+                            if "docs_cache" in st.session_state:
+                                del st.session_state.docs_cache
+                            st.session_state.confirm_delete_doc = None
+                            st.rerun()
+                        except requests.exceptions.RequestException as e:
+                            st.error(format_error_message(e))
+                with confirm_col2:
+                    if st.button("Cancel", key=f"del_cancel_{f}", width="stretch"):
+                        st.session_state.confirm_delete_doc = None
                         st.rerun()
-                    except requests.exceptions.RequestException as e:
-                        st.error(format_error_message(e))
+            else:
+                col1, col2 = st.columns([0.8, 0.2])
+                with col1:
+                    st.write(f"📄 {f}")
+                with col2:
+                    if st.button("🗑️", key=f"del_{f}"):
+                        st.session_state.confirm_delete_doc = f
+                        st.rerun()
     elif not backend_reachable:
         st.error(f"⚠️ Cannot reach backend at {API_BASE_URL}. Documents may still be indexed.")
     else:
@@ -651,6 +673,7 @@ with st.sidebar:
                         if "docs_cache" in st.session_state:
                             del st.session_state.docs_cache
                         st.session_state.confirm_delete_all = False
+                        st.session_state.pdf_uploader_gen = st.session_state.get("pdf_uploader_gen", 0) + 1
                         st.rerun()
                     except requests.exceptions.RequestException as e:
                         st.error(format_error_message(e))
