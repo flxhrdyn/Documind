@@ -131,6 +131,21 @@ def _find_table_header(text: str) -> str | None:
     return None
 
 
+def _extract_pdf_locally(file_path: str) -> list:
+    """Plain-text PDF extraction via PyMuPDF, used when LlamaParse is
+    unavailable. Returns objects shaped like LlamaParse output (.text,
+    .metadata["page_number"]) so downstream chunking code doesn't need to
+    branch on which parser produced them."""
+    import fitz
+    from llama_index.core.schema import Document as LlamaDocument
+
+    docs = []
+    with fitz.open(file_path) as pdf:
+        for i, page in enumerate(pdf):
+            docs.append(LlamaDocument(text=page.get_text(), metadata={"page_number": str(i + 1)}))
+    return docs
+
+
 def process_pdf_documents(
     file_path: str, 
     status_callback: Optional[Callable[[str], None]] = None
@@ -161,9 +176,19 @@ def process_pdf_documents(
         )
     )
     
-    # 2. Load Documents (Cloud Parsing)
-    llama_docs = parser.load_data(file_path)
-    
+    # 2. Load Documents (Cloud Parsing), falling back to local plain-text
+    # extraction if the LlamaParse API is unreachable/rate-limited/down so a
+    # single external dependency can't take indexing out entirely.
+    try:
+        llama_docs = parser.load_data(file_path)
+    except Exception:
+        logger.exception(
+            "LlamaParse failed for %s; falling back to local PyMuPDF text extraction "
+            "(reduced fidelity: no table/markdown structure, no header-based chunking)",
+            path.name,
+        )
+        llama_docs = _extract_pdf_locally(file_path)
+
     # Deteksi dan bersihkan running headers/footers secara otomatis
     llama_docs = strip_running_headers_footers(llama_docs)
     
