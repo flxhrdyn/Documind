@@ -173,11 +173,20 @@ class CacheManager:
             logger.warning(f"Failed to update semantic registry: {e}")
 
     def clear(self) -> None:
-        """Wipe the entire cache and semantic registry."""
+        """Wipe this app's cache entries and semantic registry.
+
+        Scoped to our own key prefixes (rag_exact:, rewrite_cache:,
+        semantic_registry) instead of Redis flushdb(), which would wipe the
+        entire database and any other app sharing that Redis instance."""
         try:
             if self.cache_type == "redis" and self.redis_client:
-                self.redis_client.flushdb()
-                logger.info("Redis cache cleared.")
+                deleted = 0
+                for pattern in ("rag_exact:*", "rewrite_cache:*"):
+                    keys = list(self.redis_client.scan_iter(match=pattern, count=500))
+                    if keys:
+                        deleted += self.redis_client.delete(*keys)
+                deleted += self.redis_client.delete(_SEMANTIC_REGISTRY_KEY)
+                logger.info(f"Redis cache cleared ({deleted} keys removed).")
             elif self.cache_type == "diskcache" and self.disk_cache is not None:
                 self.disk_cache.clear()
                 logger.info("Diskcache cleared.")
