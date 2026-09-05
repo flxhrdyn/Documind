@@ -108,21 +108,19 @@ class CacheManager:
         if norm_a == 0:
             return None
 
-        best_score = -1.0
-        best_key = None
-        best_entry_text: Optional[str] = None
+        # Vectorized cosine similarity: one matrix-vector product against all
+        # registry entries instead of a per-entry Python loop, so the O(n)
+        # scan stays cheap as the registry grows toward its 1000-entry cap.
+        matrix = np.array([entry["vector"] for entry in registry])
+        norms = np.linalg.norm(matrix, axis=1)
+        valid = norms > 0
+        scores = np.full(len(registry), -1.0)
+        scores[valid] = (matrix[valid] @ query_vec) / (norms[valid] * norm_a)
 
-        for entry in registry:
-            entry_vec = np.array(entry["vector"]).flatten()
-            norm_b = np.linalg.norm(entry_vec)
-            if norm_b == 0:
-                continue
-
-            score = np.dot(query_vec, entry_vec) / (norm_a * norm_b)
-            if score > best_score:
-                best_score = score
-                best_key = entry["key"]
-                best_entry_text = entry.get("query")
+        best_idx = int(np.argmax(scores))
+        best_score = float(scores[best_idx])
+        best_key = registry[best_idx]["key"]
+        best_entry_text = registry[best_idx].get("query")
 
         logger.debug(f"Semantic Cache Search: best_score={best_score:.4f}, threshold={threshold}")
 
