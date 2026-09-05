@@ -17,6 +17,7 @@ fastembed>=0.5.1
 flashrank>=0.2.8
 diskcache>=5.6.3
 redis>=5.2.1
+portalocker>=2.10.1
 tokenizers==0.22.0
 pytest>=8.3.0
 pytest-asyncio>=0.25.0

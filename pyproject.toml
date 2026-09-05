@@ -24,6 +24,7 @@ dependencies = [
     "flashrank>=0.2.8",
     "diskcache>=5.6.3",
     "redis>=5.2.1",
+    "portalocker>=2.10.1",
     "pandas>=2.0.0",
     "plotly>=5.18.0",
     "tokenizers==0.22.0",

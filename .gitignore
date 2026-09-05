@@ -57,6 +57,7 @@ htmlcov/
 **/uploaded_docs/*
 !**/uploaded_docs/.gitkeep
 metrics.json
+metrics.json.lock
 *.pkl
 
 # Streamlit
@@ -71,3 +72,5 @@ logs/
 temp/
 tmp/docs/
 .superpowers/
+docs/superpowers/
+CLAUDE.md

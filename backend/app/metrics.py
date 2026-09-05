@@ -12,11 +12,14 @@ from datetime import datetime
 import threading
 from typing import Any, Dict, List, Optional
 
+import portalocker
+
 from .config import IR_RELEVANCE_THRESHOLD, METRICS_FILE
 
 
 logger = logging.getLogger(__name__)
 _metrics_lock = threading.Lock()
+_METRICS_LOCKFILE = f"{METRICS_FILE}.lock"
 
 
 def load_metrics() -> Dict[str, Any]:
@@ -91,7 +94,32 @@ def log_query(
     standalone_query: str = "",
 ) -> None:
     """Log a query with RAG metrics."""
+    # threading.Lock guards same-process concurrency cheaply; portalocker's
+    # file lock additionally guards the read-modify-write across multiple
+    # worker processes, which the threading.Lock alone cannot do.
     with _metrics_lock:
+        with portalocker.Lock(_METRICS_LOCKFILE, timeout=10):
+            _log_query_locked(
+                question, response_time, answer_length, retrieval_time,
+                generation_time, docs_retrieved, chunks_processed,
+                retrieval_scores, initial_ranks, thoughts, answer, standalone_query,
+            )
+
+
+def _log_query_locked(
+    question: str,
+    response_time: float,
+    answer_length: int,
+    retrieval_time: float,
+    generation_time: float,
+    docs_retrieved: int,
+    chunks_processed: int,
+    retrieval_scores: Optional[List[float]],
+    initial_ranks: Optional[List[int]],
+    thoughts: str,
+    answer: str,
+    standalone_query: str,
+) -> None:
         metrics = load_metrics()
         
         metrics["total_queries"] += 1
@@ -129,17 +157,19 @@ def log_query(
 def log_document_indexed() -> None:
     """Record that a document was indexed."""
     with _metrics_lock:
-        metrics = load_metrics()
-        metrics["total_documents_indexed"] += 1
-        save_metrics(metrics)
+        with portalocker.Lock(_METRICS_LOCKFILE, timeout=10):
+            metrics = load_metrics()
+            metrics["total_documents_indexed"] += 1
+            save_metrics(metrics)
 
 
 def sync_indexed_docs_count(count: int) -> None:
     """Manually sync the total documents indexed count (e.g. from vector store)."""
     with _metrics_lock:
-        metrics = load_metrics()
-        metrics["total_documents_indexed"] = count
-        save_metrics(metrics)
+        with portalocker.Lock(_METRICS_LOCKFILE, timeout=10):
+            metrics = load_metrics()
+            metrics["total_documents_indexed"] = count
+            save_metrics(metrics)
 
 
 def get_avg_response_time() -> float:
@@ -201,17 +231,18 @@ def get_generation_efficiency() -> float:
 def reset_metrics() -> None:
     """Reset all stored metrics."""
     with _metrics_lock:
-        metrics = {
-            "total_queries": 0,
-            "total_documents_indexed": 0,
-            "total_response_time": 0,
-            "total_retrieval_time": 0,
-            "total_generation_time": 0,
-            "total_docs_retrieved": 0,
-            "total_chunks_processed": 0,
-            "query_history": []
-        }
-        save_metrics(metrics)
+        with portalocker.Lock(_METRICS_LOCKFILE, timeout=10):
+            metrics = {
+                "total_queries": 0,
+                "total_documents_indexed": 0,
+                "total_response_time": 0,
+                "total_retrieval_time": 0,
+                "total_generation_time": 0,
+                "total_docs_retrieved": 0,
+                "total_chunks_processed": 0,
+                "query_history": []
+            }
+            save_metrics(metrics)
 
 
 # ── IR Metric Computation ─────────────────────────────────────────────────────
