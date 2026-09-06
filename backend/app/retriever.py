@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.documents import Document
@@ -16,6 +17,7 @@ from langchain_classic.retrievers.multi_query import MultiQueryRetriever
 from langchain_qdrant import QdrantVectorStore, RetrievalMode
 from qdrant_client import QdrantClient
 
+from .cache_manager import CacheManager
 from .embeddings import get_embeddings, get_sparse_embeddings
 from .llm import get_llm
 from .config import (
@@ -35,18 +37,29 @@ logging.getLogger("langchain.retrievers.multi_query").setLevel(logging.WARNING)
 
 _RetrieverStack = Tuple[MultiQueryRetriever, QdrantVectorStore, QdrantClient]
 _retriever_cache: Optional[_RetrieverStack] = None
+_retriever_cache_version: Optional[float] = None
 _retriever_cache_lock = threading.Lock()
+
+# Shared version stamp so multi-worker deployments invalidate their
+# process-local retriever cache together: a worker rebuilds the stack
+# whenever this stamp (bumped on upload/delete/clear) moves past what it
+# last built from, instead of only reacting to its own in-process calls.
+_RETRIEVER_VERSION_KEY = "retriever_cache_version"
+_cache_manager = CacheManager()
 
 
 def invalidate_retriever_cache() -> None:
     """Drop the cached retriever stack.
 
     Call this whenever the indexed knowledge base changes (upload/delete/clear)
-    so the next query re-validates that the collection still exists.
+    so the next query re-validates that the collection still exists. Also
+    bumps a shared version stamp so other worker processes drop their own
+    cached stack on their next call.
     """
     global _retriever_cache
     with _retriever_cache_lock:
         _retriever_cache = None
+    _cache_manager.set(_RETRIEVER_VERSION_KEY, time.time(), ttl=30 * 24 * 60 * 60)
 
 
 def build_retriever() -> _RetrieverStack:
@@ -67,10 +80,15 @@ def build_retriever() -> _RetrieverStack:
         )
 
     client = get_qdrant_client()
+    current_version = _cache_manager.get(_RETRIEVER_VERSION_KEY)
 
-    global _retriever_cache
+    global _retriever_cache, _retriever_cache_version
     with _retriever_cache_lock:
-        if _retriever_cache is not None and _retriever_cache[2] is client:
+        if (
+            _retriever_cache is not None
+            and _retriever_cache[2] is client
+            and _retriever_cache_version == current_version
+        ):
             return _retriever_cache
 
     # Embedding models (cached)
@@ -135,6 +153,7 @@ def build_retriever() -> _RetrieverStack:
     stack = (retriever, vectorstore, client)
     with _retriever_cache_lock:
         _retriever_cache = stack
+        _retriever_cache_version = current_version
     return stack
 
 
