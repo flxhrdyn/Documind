@@ -576,21 +576,27 @@ with st.sidebar:
     if delete_after_index:
         st.info('Uploaded PDFs will be deleted after indexing.')
 
-    uploaded_file = st.file_uploader(
-        f"Add documents to build your AI knowledge base (max {MAX_UPLOAD_SIZE_MB}MB)",
+    uploaded_files = st.file_uploader(
+        f"Add documents to build your AI knowledge base (max {MAX_UPLOAD_SIZE_MB}MB each)",
         key=f"pdf_uploader_{st.session_state.get('pdf_uploader_gen', 0)}",
         type=["pdf"],
+        accept_multiple_files=True,
     )
-    if uploaded_file:
-        upload_status_slot = st.empty()
-        if uploaded_file.size > MAX_UPLOAD_SIZE_MB * 1024 * 1024:
-            st.error(f"❌ File exceeds the {MAX_UPLOAD_SIZE_MB}MB upload limit.")
-        elif st.button("⚡ Process & Index", width="stretch"):
-            with st.spinner("Indexing document..."):
-                job_id, err = create_upload_job(uploaded_file)
-                if err or not job_id:
-                    st.error(err or "❌ **Error:** Failed to create upload job.")
-                else:
+    if uploaded_files:
+        oversized = [f for f in uploaded_files if f.size > MAX_UPLOAD_SIZE_MB * 1024 * 1024]
+        for f in oversized:
+            st.error(f"❌ **{f.name}** exceeds the {MAX_UPLOAD_SIZE_MB}MB upload limit.")
+        indexable_files = [f for f in uploaded_files if f not in oversized]
+        if indexable_files and st.button("⚡ Process & Index", width="stretch"):
+            any_failed = False
+            for uploaded_file in indexable_files:
+                upload_status_slot = st.empty()
+                with st.spinner(f"Indexing {uploaded_file.name}..."):
+                    job_id, err = create_upload_job(uploaded_file)
+                    if err or not job_id:
+                        any_failed = True
+                        st.error(err or f"❌ **Error:** Failed to create upload job for **{uploaded_file.name}**.")
+                        continue
                     upload_status_slot.info(f"**{uploaded_file.name}** uploaded. Starting indexing job...")
                     ok, message = wait_for_upload_job(
                         job_id,
@@ -599,15 +605,16 @@ with st.sidebar:
                     )
                     if ok:
                         st.success(message)
-                        if "docs_cache" in st.session_state:
-                            del st.session_state.docs_cache
-                        st.session_state.pdf_uploader_gen = st.session_state.get("pdf_uploader_gen", 0) + 1
-                        st.rerun()
+                    elif "still running in the background" in message:
+                        st.info(message)
                     else:
-                        if "still running in the background" in message:
-                            st.info(message)
-                        else:
-                            st.error(message)
+                        any_failed = True
+                        st.error(message)
+            if "docs_cache" in st.session_state:
+                del st.session_state.docs_cache
+            if not any_failed:
+                st.session_state.pdf_uploader_gen = st.session_state.get("pdf_uploader_gen", 0) + 1
+            st.rerun()
 
 
 
@@ -615,38 +622,39 @@ with st.sidebar:
     st.subheader("🧠 Knowledge Base")
     indexed_files, backend_reachable = get_indexed_files()
     if indexed_files:
-        for f in indexed_files:
-            if st.session_state.get("confirm_delete_doc") == f:
-                st.warning(f"Delete **{f}**? This cannot be undone.")
-                confirm_col1, confirm_col2 = st.columns(2)
-                with confirm_col1:
-                    if st.button("✅ Yes", key=f"del_yes_{f}", width="stretch"):
-                        try:
-                            resp = requests.delete(
-                                f"{API_BASE_URL}/documents/delete",
-                                params={"filename": f},
-                                headers=API_HEADERS,
-                                timeout=30,
-                            )
-                            resp.raise_for_status()
-                            if "docs_cache" in st.session_state:
-                                del st.session_state.docs_cache
+        with st.container(height=250):
+            for f in indexed_files:
+                if st.session_state.get("confirm_delete_doc") == f:
+                    st.warning(f"Delete **{f}**? This cannot be undone.")
+                    confirm_col1, confirm_col2 = st.columns(2)
+                    with confirm_col1:
+                        if st.button("✅ Yes", key=f"del_yes_{f}", width="stretch"):
+                            try:
+                                resp = requests.delete(
+                                    f"{API_BASE_URL}/documents/delete",
+                                    params={"filename": f},
+                                    headers=API_HEADERS,
+                                    timeout=30,
+                                )
+                                resp.raise_for_status()
+                                if "docs_cache" in st.session_state:
+                                    del st.session_state.docs_cache
+                                st.session_state.confirm_delete_doc = None
+                                st.rerun()
+                            except requests.exceptions.RequestException as e:
+                                st.error(format_error_message(e))
+                    with confirm_col2:
+                        if st.button("Cancel", key=f"del_cancel_{f}", width="stretch"):
                             st.session_state.confirm_delete_doc = None
                             st.rerun()
-                        except requests.exceptions.RequestException as e:
-                            st.error(format_error_message(e))
-                with confirm_col2:
-                    if st.button("Cancel", key=f"del_cancel_{f}", width="stretch"):
-                        st.session_state.confirm_delete_doc = None
-                        st.rerun()
-            else:
-                col1, col2 = st.columns([0.8, 0.2])
-                with col1:
-                    st.write(f"📄 {f}")
-                with col2:
-                    if st.button("🗑️", key=f"del_{f}"):
-                        st.session_state.confirm_delete_doc = f
-                        st.rerun()
+                else:
+                    col1, col2 = st.columns([0.8, 0.2])
+                    with col1:
+                        st.write(f"📄 {f}")
+                    with col2:
+                        if st.button("🗑️", key=f"del_{f}"):
+                            st.session_state.confirm_delete_doc = f
+                            st.rerun()
     elif not backend_reachable:
         st.error(f"⚠️ Cannot reach backend at {API_BASE_URL}. Documents may still be indexed.")
     else:
@@ -691,83 +699,31 @@ with st.sidebar:
 
 
 
-# ── Chat ──────────────────────────────────────────────────────────────────────
-# Chat history lives only in st.session_state - scoped to this browser
-# session by Streamlit itself, so it can never leak between users. It won't
-# survive a full page reload, which is the correct tradeoff for a RAG demo
-# without user accounts.
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+def _start_stream(prompt: str, formatted_history: list[str]) -> None:
+    """Kick off a background streaming query, shared by both the chat input
+    and the Regenerate button so their state setup can't drift apart."""
+    cancel_event = threading.Event()
+    state_lock = threading.Lock()
+    stream_state = {
+        "answer": "",
+        "sources": [],
+        "thoughts": [],
+        "label": "🧠 Thinking...",
+        "status_state": "running",
+        "error": None,
+        "cancelled": False,
+        "done": False,
+    }
+    st.session_state.stream_state = stream_state
+    st.session_state.stream_cancel_event = cancel_event
+    st.session_state.stream_state_lock = state_lock
+    st.session_state.stream_stop_requested = False
+    threading.Thread(
+        target=_stream_query_worker,
+        args=(prompt, formatted_history, stream_state, cancel_event, state_lock),
+        daemon=True,
+    ).start()
 
-# Welcome screen when no messages
-if _is_chat_active():
-    if not st.session_state.messages:
-        st.markdown("""
-            <div class="welcome-container">
-                <h1 class="welcome-title">🧠 InvenioAI</h1>
-                <p class="welcome-subtitle">Ask anything about your Knowledge Base.</p>
-            </div>
-        """, unsafe_allow_html=True)
-
-    # Render history
-    for i, message in enumerate(st.session_state.messages):
-        with st.chat_message(message["role"]):
-            # Display Thinking Process (if any)
-            thoughts = message.get("thoughts")
-            if thoughts:
-                with st.expander("🧠 Thought Process", expanded=False):
-                    if isinstance(thoughts, list):
-                        st.markdown("\n".join(thoughts))
-                    else:
-                        # Ultra-aggressive cleanup: remove all stars anywhere near Step X
-                        import re
-                        # 1. Remove all stars first to get raw text
-                        clean_thoughts = thoughts.replace("**", "")
-                        # 2. Format Step X: with proper bolding and spacing
-                        clean_thoughts = re.sub(r'(?i)(Step\s*\d+:)', r'\n\n**\1**', clean_thoughts)
-                        st.markdown(clean_thoughts.strip())
-            
-            st.markdown(message["content"])
-        
-            # Interactive Sources for assistant messages
-            sources = message.get("sources")
-            if sources and isinstance(sources, list):
-                # Group sources by filename
-                from collections import defaultdict
-                grouped = defaultdict(list)
-                for s in sources:
-                    grouped[s['file']].append({
-                        "text": s.get('text', ''),
-                        "page": s.get('page'),
-                        "header": s.get('header'),
-                        "score": s.get('score')
-                    })
-
-                source_items = list(grouped.items())
-                if source_items:
-                    with st.expander(f"📚 {len(source_items)} Sources", expanded=False):
-                        for filename, snippets in source_items:
-                            st.markdown(f"**📄 {filename}**")
-                            for item in snippets:
-                                text = item["text"]
-                                page = item["page"]
-                                header = item.get("header")
-                                score = item.get("score")
-
-                                meta_parts = []
-                                if page:
-                                    meta_parts.append(f"**Page {page}**")
-                                if header:
-                                    meta_parts.append(f"_{header}_")
-                                if isinstance(score, (int, float)):
-                                    meta_parts.append(f"Relevance: {score:.2f}")
-
-                                if meta_parts:
-                                    st.caption(" · ".join(meta_parts))
-                                    
-                                # Render as raw markdown (no blockquote) to ensure tables render correctly.
-                                # Wrap in a div to allow horizontal scrolling if tables are wide.
-                                st.markdown(f'<div style="overflow-x: auto;">\n{text.strip()}\n</div>', unsafe_allow_html=True)
 
 def _stream_query_worker(
     prompt: str,
@@ -895,6 +851,103 @@ def _render_streaming_answer() -> None:
         st.rerun()
 
 
+# ── Chat ──────────────────────────────────────────────────────────────────────
+# Chat history lives only in st.session_state - scoped to this browser
+# session by Streamlit itself, so it can never leak between users. It won't
+# survive a full page reload, which is the correct tradeoff for a RAG demo
+# without user accounts.
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# Welcome screen when no messages
+if _is_chat_active():
+    if not st.session_state.messages:
+        st.markdown("""
+            <div class="welcome-container">
+                <h1 class="welcome-title">🧠 InvenioAI</h1>
+                <p class="welcome-subtitle">Ask anything about your Knowledge Base.</p>
+            </div>
+        """, unsafe_allow_html=True)
+
+    # Render history
+    for i, message in enumerate(st.session_state.messages):
+        with st.chat_message(message["role"]):
+            # Display Thinking Process (if any)
+            thoughts = message.get("thoughts")
+            if thoughts:
+                with st.expander("🧠 Thought Process", expanded=False):
+                    if isinstance(thoughts, list):
+                        st.markdown("\n".join(thoughts))
+                    else:
+                        # Ultra-aggressive cleanup: remove all stars anywhere near Step X
+                        import re
+                        # 1. Remove all stars first to get raw text
+                        clean_thoughts = thoughts.replace("**", "")
+                        # 2. Format Step X: with proper bolding and spacing
+                        clean_thoughts = re.sub(r'(?i)(Step\s*\d+:)', r'\n\n**\1**', clean_thoughts)
+                        st.markdown(clean_thoughts.strip())
+            
+            st.markdown(message["content"])
+
+            if message["role"] == "assistant":
+                is_last_message = i == len(st.session_state.messages) - 1
+                can_regenerate = is_last_message and st.session_state.get("stream_state") is None
+                action_cols = st.columns([1, 1, 6]) if can_regenerate else st.columns([1, 7])
+                with action_cols[0]:
+                    with st.popover("📋"):
+                        st.code(message["content"], language=None)
+                if can_regenerate:
+                    with action_cols[1]:
+                        if st.button("🔄", key=f"regen_{i}", help="Regenerate this answer"):
+                            st.session_state.messages.pop(i)
+                            last_user_content = st.session_state.messages[-1]["content"]
+                            formatted_history = [
+                                f"{m['role']}: {m['content']}"
+                                for m in st.session_state.messages[:-1]
+                            ]
+                            _start_stream(last_user_content, formatted_history)
+                            st.rerun()
+
+            # Interactive Sources for assistant messages
+            sources = message.get("sources")
+            if sources and isinstance(sources, list):
+                # Group sources by filename
+                from collections import defaultdict
+                grouped = defaultdict(list)
+                for s in sources:
+                    grouped[s['file']].append({
+                        "text": s.get('text', ''),
+                        "page": s.get('page'),
+                        "header": s.get('header'),
+                        "score": s.get('score')
+                    })
+
+                source_items = list(grouped.items())
+                if source_items:
+                    with st.expander(f"📚 {len(source_items)} Sources", expanded=False):
+                        for filename, snippets in source_items:
+                            st.markdown(f"**📄 {filename}**")
+                            for item in snippets:
+                                text = item["text"]
+                                page = item["page"]
+                                header = item.get("header")
+                                score = item.get("score")
+
+                                meta_parts = []
+                                if page:
+                                    meta_parts.append(f"**Page {page}**")
+                                if header:
+                                    meta_parts.append(f"_{header}_")
+                                if isinstance(score, (int, float)):
+                                    meta_parts.append(f"Relevance: {score:.2f}")
+
+                                if meta_parts:
+                                    st.caption(" · ".join(meta_parts))
+                                    
+                                # Render as raw markdown (no blockquote) to ensure tables render correctly.
+                                # Wrap in a div to allow horizontal scrolling if tables are wide.
+                                st.markdown(f'<div style="overflow-x: auto;">\n{text.strip()}\n</div>', unsafe_allow_html=True)
+
 # Input
 raw_prompt = st.chat_input("Ask something about your documents...")
 prompt = raw_prompt.strip() if raw_prompt else ""
@@ -923,27 +976,7 @@ if prompt:
                 for m in st.session_state.messages[:-1]
             ]
 
-            cancel_event = threading.Event()
-            state_lock = threading.Lock()
-            stream_state = {
-                "answer": "",
-                "sources": [],
-                "thoughts": [],
-                "label": "🧠 Thinking...",
-                "status_state": "running",
-                "error": None,
-                "cancelled": False,
-                "done": False,
-            }
-            st.session_state.stream_state = stream_state
-            st.session_state.stream_cancel_event = cancel_event
-            st.session_state.stream_state_lock = state_lock
-            st.session_state.stream_stop_requested = False
-            threading.Thread(
-                target=_stream_query_worker,
-                args=(prompt, formatted_history, stream_state, cancel_event, state_lock),
-                daemon=True,
-            ).start()
+            _start_stream(prompt, formatted_history)
 
 if st.session_state.get("stream_state") is not None:
     _render_streaming_answer()
