@@ -10,7 +10,6 @@ import hashlib
 import logging
 import os
 import shutil
-import threading
 import time
 import uuid
 from typing import Any, Dict, Literal, Optional, Callable, Tuple
@@ -28,6 +27,7 @@ from .config import (
 )
 from .index_data import index_documents
 from .qdrant_conn import close_qdrant_client, get_qdrant_client
+from .rag_pipeline import get_cache_manager
 
 router = APIRouter()
 
@@ -36,18 +36,24 @@ logger = logging.getLogger(__name__)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 UploadJobState = Literal["pending", "running", "parsing", "indexing", "succeeded", "failed"]
-_upload_jobs_lock = threading.Lock()
-_upload_jobs: Dict[str, Dict[str, Any]] = {}
+
+# Job state lives in the shared cache (Redis/diskcache), not an in-memory
+# dict: a plain dict is only visible within the worker process that created
+# it, so a client polling job status could hit a different uvicorn worker
+# and get a false 404. TTL bounds how long finished/abandoned jobs linger.
+_UPLOAD_JOB_TTL_SECONDS = 24 * 60 * 60
+
+
+def _upload_job_cache_key(job_id: str) -> str:
+    return f"upload_job:{job_id}"
 
 
 def _set_upload_job(job: Dict[str, Any]) -> None:
-    with _upload_jobs_lock:
-        _upload_jobs[job["job_id"]] = job
+    get_cache_manager().set(_upload_job_cache_key(job["job_id"]), job, ttl=_UPLOAD_JOB_TTL_SECONDS)
 
 
 def _get_upload_job(job_id: str) -> Optional[Dict[str, Any]]:
-    with _upload_jobs_lock:
-        return _upload_jobs.get(job_id)
+    return get_cache_manager().get(_upload_job_cache_key(job_id))
 
 
 _MAX_UPLOAD_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
