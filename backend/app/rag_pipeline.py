@@ -187,6 +187,35 @@ async def rewrite_query_async(query: str, history: list[str]) -> str:
         return query
 
 
+def _lookup_cache(
+    cache: CacheManager, standalone_query: str, exact_key: str
+) -> tuple[Any, Any]:
+    """L1 exact then L2 semantic cache lookup.
+
+    Returns `(cached_result, query_embedding)`. `query_embedding` is the
+    embedding computed for the L2 check (None on an L1 hit, since it's
+    never needed) - callers that go on to run the pipeline on a full miss
+    reuse it instead of re-embedding.
+    """
+    cached = cache.get(exact_key)
+    if cached:
+        return cached, None
+
+    embedder = get_embeddings()
+    query_embedding = embedder.embed_query(standalone_query)
+
+    semantic_key = cache.get_semantic(
+        query_embedding, threshold=SEMANTIC_CACHE_THRESHOLD, query_text=standalone_query
+    )
+    if semantic_key:
+        cached_sem = cache.get(semantic_key)
+        if cached_sem:
+            cache.set(exact_key, cached_sem, ttl=3600)
+            return cached_sem, query_embedding
+
+    return None, query_embedding
+
+
 def rag_pipeline(question: str, history: Any) -> dict[str, Any]:
     """Run the RAG pipeline with a 2-layer lean cache (L1 exact, L2 semantic)."""
     total_start = time.monotonic()
@@ -198,10 +227,12 @@ def rag_pipeline(question: str, history: Any) -> dict[str, Any]:
             standalone_query = rewrite_query(question, history)
             logger.info(f"Standalone Query: {standalone_query}")
             exact_key = _get_exact_cache_key(standalone_query)
-
-            cached = cache.get(exact_key)
-            if cached:
-                logger.info(f"RAG L1 Exact Cache HIT for: {standalone_query[:50]}")
+            cached, query_embedding = _lookup_cache(cache, standalone_query, exact_key)
+            if cached is not None:
+                is_l1 = query_embedding is None
+                logger.info(
+                    f"RAG {'L1 Exact' if is_l1 else 'L2 Semantic'} Cache HIT for: {standalone_query[:50]}"
+                )
                 try:
                     log_query(
                         question=question,
@@ -219,32 +250,8 @@ def rag_pipeline(question: str, history: Any) -> dict[str, Any]:
                     logger.warning("Failed to log cached query metrics", exc_info=True)
                 return cached
 
-            # L2: semantically similar queries avoid redundant RAG processing.
-            embedder = get_embeddings()
-            query_embedding = embedder.embed_query(standalone_query)
-
-            semantic_key = cache.get_semantic(query_embedding, threshold=SEMANTIC_CACHE_THRESHOLD, query_text=standalone_query)
-            if semantic_key:
-                cached_sem = cache.get(semantic_key)
-                if cached_sem:
-                    logger.info(f"RAG L2 Semantic Cache HIT for: {standalone_query[:50]}")
-                    try:
-                        log_query(
-                            question=question,
-                            answer=cached_sem["answer"],
-                            response_time=round(time.monotonic() - total_start, 2),
-                            retrieval_time=0,
-                            generation_time=0,
-                            docs_retrieved=cached_sem.get("metrics", {}).get("docs_retrieved", 0),
-                            chunks_processed=cached_sem.get("metrics", {}).get("chunks_processed", 0),
-                            retrieval_scores=cached_sem.get("metrics", {}).get("retrieval_scores", []),
-                            thoughts=cached_sem.get("thoughts", ""),
-                            standalone_query=standalone_query
-                        )
-                    except Exception:
-                        logger.warning("Failed to log semantic cached query metrics", exc_info=True)
-                    cache.set(exact_key, cached_sem, ttl=3600)
-                    return cached_sem
+            if query_embedding is None:
+                query_embedding = get_embeddings().embed_query(standalone_query)
 
             result = _run_rag_pipeline_with_query(standalone_query, question, history)
             # Don't cache "nothing relevant found" - retrieval may succeed once
@@ -368,9 +375,10 @@ async def rag_pipeline_stream_async(query: str, chat_history: list[str]):
         logger.info(f"Stream Standalone Query: {standalone_query}")
         exact_key = _get_exact_cache_key(standalone_query)
 
-        cached = cache.get(exact_key)
-        if cached:
-            logger.info("Stream: L1 Exact Cache HIT")
+        cached, query_embedding = _lookup_cache(cache, standalone_query, exact_key)
+        if cached is not None:
+            is_l1 = query_embedding is None
+            logger.info(f"Stream: {'L1 Exact' if is_l1 else 'L2 Semantic'} Cache HIT")
             yield json.dumps({"step": "cached", "answer": cached["answer"]}) + "\n"
             yield json.dumps({
                 "step": "done",
@@ -381,54 +389,35 @@ async def rag_pipeline_stream_async(query: str, chat_history: list[str]):
             }) + "\n"
 
             try:
-                log_query(
-                    question=query,
-                    response_time=round(time.monotonic() - total_start, 2),
-                    answer_length=len(cached.get("answer", "")),
-                    retrieval_time=0,
-                    generation_time=0,
-                    docs_retrieved=cached.get("metrics", {}).get("docs_retrieved", 0),
-                    chunks_processed=cached.get("metrics", {}).get("chunks_processed", 0),
-                    retrieval_scores=cached.get("metrics", {}).get("retrieval_scores", []),
-                    thoughts=cached.get("thoughts", ""),
-                    standalone_query=standalone_query,
-                )
+                if is_l1:
+                    log_query(
+                        question=query,
+                        response_time=round(time.monotonic() - total_start, 2),
+                        answer_length=len(cached.get("answer", "")),
+                        retrieval_time=0,
+                        generation_time=0,
+                        docs_retrieved=cached.get("metrics", {}).get("docs_retrieved", 0),
+                        chunks_processed=cached.get("metrics", {}).get("chunks_processed", 0),
+                        retrieval_scores=cached.get("metrics", {}).get("retrieval_scores", []),
+                        thoughts=cached.get("thoughts", ""),
+                        standalone_query=standalone_query,
+                    )
+                else:
+                    log_query(
+                        question=query,
+                        response_time=round(time.monotonic() - total_start, 2),
+                        answer_length=len(cached["answer"]),
+                        retrieval_time=0,
+                        generation_time=0,
+                        thoughts=cached.get("thoughts", ""),
+                        standalone_query=standalone_query,
+                    )
             except Exception:
                 pass
             return
 
-        # L2: semantically similar queries avoid redundant RAG processing.
-        embedder = get_embeddings()
-        query_embedding = embedder.embed_query(standalone_query)
-
-        semantic_key = cache.get_semantic(query_embedding, threshold=SEMANTIC_CACHE_THRESHOLD, query_text=standalone_query)
-        if semantic_key:
-            cached_sem = cache.get(semantic_key)
-            if cached_sem:
-                logger.info("Stream: L2 Semantic Cache HIT")
-                yield json.dumps({"step": "cached", "answer": cached_sem["answer"]}) + "\n"
-                yield json.dumps({
-                    "step": "done",
-                    "answer": cached_sem["answer"],
-                    "thoughts": cached_sem.get("thoughts", ""),
-                    "sources": cached_sem["sources"],
-                    "metrics": cached_sem.get("metrics", {})
-                }) + "\n"
-
-                try:
-                    log_query(
-                        question=query,
-                        response_time=round(time.monotonic() - total_start, 2),
-                        answer_length=len(cached_sem["answer"]),
-                        retrieval_time=0,
-                        generation_time=0,
-                        thoughts=cached_sem.get("thoughts", ""),
-                        standalone_query=standalone_query,
-                    )
-                except Exception:
-                    pass
-                cache.set(exact_key, cached_sem, ttl=3600)
-                return
+        if query_embedding is None:
+            query_embedding = get_embeddings().embed_query(standalone_query)
 
         yield json.dumps({"step": "retrieving", "query": standalone_query}) + "\n"
         retriever, vectorstore, client = build_retriever()
