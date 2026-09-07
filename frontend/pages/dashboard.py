@@ -253,7 +253,10 @@ if per_q:
             lambda x: f"{x:.4f}" if pd.notna(x) else "—"
         )
 
-    st.dataframe(df_display, width="stretch", hide_index=True, height=320)
+    # Row height (~35px) + header, capped at 320px so a handful of rows
+    # doesn't leave a mostly-empty table.
+    table_height = min(320, 38 + 35 * len(df_display))
+    st.dataframe(df_display, width="stretch", hide_index=True, height=table_height)
 else:
     st.info("No query history yet.")
 
