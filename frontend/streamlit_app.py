@@ -6,6 +6,7 @@ backend URL with `INVENIOAI_API_BASE_URL` (defaults to `http://localhost:8000`).
 
 import json
 import os
+import re
 import threading
 import time
 
@@ -116,6 +117,34 @@ ASSISTANT_TYPING_MAX_WORDS = _get_assistant_typing_max_words()
 
 def _is_chat_active() -> bool:
     return True
+
+
+_LATEX_BLOCK_RE = re.compile(r"```(?:\w+)?\n?(.*?)```", re.DOTALL)
+_LATEX_INLINE_RE = re.compile(r"`([^`\n]+)`")
+
+
+def _unwrap_backtick_latex(text: str) -> str:
+    """The model is told never to use backticks and to wrap math in $/$$, but
+    it sometimes fences LaTeX in backticks anyway - which renders as a raw
+    code block instead of a formula. Detect backtick spans that look like
+    LaTeX (contain a backslash command) and convert them to $/$$ so
+    Streamlit's markdown/MathJax renders them properly."""
+
+    def _block(match: re.Match) -> str:
+        inner = match.group(1).strip()
+        if "\\" in inner:
+            return f"\n$$\n{inner.strip('$').strip()}\n$$\n"
+        return match.group(0)
+
+    def _inline(match: re.Match) -> str:
+        inner = match.group(1)
+        if "\\" in inner:
+            return f"${inner.strip('$')}$"
+        return match.group(0)
+
+    text = _LATEX_BLOCK_RE.sub(_block, text)
+    text = _LATEX_INLINE_RE.sub(_inline, text)
+    return text
 
 
 def _get_upload_duration_history() -> list[float]:
@@ -825,7 +854,7 @@ def _render_streaming_answer() -> None:
         if state["error"]:
             st.error(f"❌ **Pipeline Error:** {state['error']}")
         elif state["answer"]:
-            st.markdown(state["answer"] + ("" if state["done"] else " ▌"))
+            st.markdown(_unwrap_backtick_latex(state["answer"]) + ("" if state["done"] else " ▌"))
         if state["done"] and state["cancelled"] and state["answer"]:
             st.caption("⏹️ Generation stopped early by user.")
 
@@ -851,6 +880,36 @@ def _render_streaming_answer() -> None:
 # without user accounts.
 if "messages" not in st.session_state:
     st.session_state.messages = []
+
+# Input capture happens before rendering so a newly submitted question is
+# appended to session_state.messages first and the history loop below draws
+# it exactly once - drawing it here too used to leave a duplicate bubble on
+# screen once the streaming fragment's completion rerun redrew the history.
+raw_prompt = st.chat_input("Ask something about your documents...")
+prompt = raw_prompt.strip() if raw_prompt else ""
+if prompt:
+    last_user_message = next(
+        (m["content"] for m in reversed(st.session_state.messages) if m["role"] == "user"),
+        None,
+    )
+    if prompt == last_user_message:
+        st.toast("You just asked that - scroll up to see the answer.")
+    else:
+        indexed_files, backend_reachable = get_indexed_files()
+        if not indexed_files:
+            if backend_reachable:
+                st.session_state.pending_notice = ("warning", "⚠️ No documents indexed yet. Please upload a PDF in the sidebar first.")
+            else:
+                st.session_state.pending_notice = ("error", f"⚠️ Cannot reach the backend at {API_BASE_URL}. Please check the connection.")
+        else:
+            st.session_state.messages.append({"role": "user", "content": prompt})
+
+            formatted_history = [
+                f"{m['role']}: {m['content']}"
+                for m in st.session_state.messages[:-1]
+            ]
+
+            _start_stream(prompt, formatted_history)
 
 # Welcome screen when no messages
 if _is_chat_active():
@@ -879,7 +938,7 @@ if _is_chat_active():
                         clean_thoughts = re.sub(r'(?i)(Step\s*\d+:)', r'\n\n**\1**', clean_thoughts)
                         st.markdown(clean_thoughts.strip())
             
-            st.markdown(message["content"])
+            st.markdown(_unwrap_backtick_latex(message["content"]))
 
             if message["role"] == "assistant":
                 is_last_message = i == len(st.session_state.messages) - 1
@@ -939,35 +998,10 @@ if _is_chat_active():
                                 # Wrap in a div to allow horizontal scrolling if tables are wide.
                                 st.markdown(f'<div style="overflow-x: auto;">\n{text.strip()}\n</div>', unsafe_allow_html=True)
 
-# Input
-raw_prompt = st.chat_input("Ask something about your documents...")
-prompt = raw_prompt.strip() if raw_prompt else ""
-if prompt:
-    last_user_message = next(
-        (m["content"] for m in reversed(st.session_state.messages) if m["role"] == "user"),
-        None,
-    )
-    if prompt == last_user_message:
-        st.toast("You just asked that - scroll up to see the answer.")
-    else:
-        indexed_files, backend_reachable = get_indexed_files()
-        if not indexed_files:
-            with st.chat_message("assistant"):
-                if backend_reachable:
-                    st.warning("⚠️ No documents indexed yet. Please upload a PDF in the sidebar first.")
-                else:
-                    st.error(f"⚠️ Cannot reach the backend at {API_BASE_URL}. Please check the connection.")
-        else:
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
-
-            formatted_history = [
-                f"{m['role']}: {m['content']}"
-                for m in st.session_state.messages[:-1]
-            ]
-
-            _start_stream(prompt, formatted_history)
+if st.session_state.get("pending_notice") is not None:
+    level, text = st.session_state.pop("pending_notice")
+    with st.chat_message("assistant"):
+        getattr(st, level)(text)
 
 if st.session_state.get("stream_state") is not None:
     _render_streaming_answer()

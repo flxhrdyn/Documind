@@ -45,7 +45,7 @@ Respond with exactly {num_fusion_plus_one} lines, one question per line, nothing
 """
 
 
-RAG_PROMPT = """
+RAG_PROMPT = r"""
 Answer the question using the provided context. Follow the instructions strictly.
 
 CORE RULES:
@@ -98,6 +98,7 @@ Instructions:
    - Provide a **concise, direct, and professional narrative** (around 2 to 4 sentences or a short paragraph).
    - **NO WORDINESS**: Do not be overly verbose or beat around the bush, but do not give a 1-sentence answer either. Get straight to the point while providing necessary context.
    - **NO BACKTICKS**: NEVER use single backticks (`) or triple backticks (```) to highlight numbers, text, or anything else. If you need to emphasize something, use bold text (**) instead.
+   - **MATH FORMATTING**: If the answer includes a formula or equation, wrap it in LaTeX delimiters so it renders: `$...$` for inline math, `$$...$$` for a standalone equation. NEVER emit raw LaTeX commands (e.g. `\frac`, `\sum`, `\eta`) outside these delimiters.
    - **NO INTRO OR FILLER**: Do NOT use filler phrases like "Berikut adalah...", "Informasi ini ditemukan pada bagian...", or "Based on the documents...". Start directly with the factual answer.
    - Use a polite and professional tone in the SAME LANGUAGE as the question.
 6. DO NOT cite sources manually.
