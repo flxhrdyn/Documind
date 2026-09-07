@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from .auth import require_api_key
 from .embeddings import get_embeddings, get_sparse_embeddings
 from .index_api import router as index_router
-from .config import ALLOWED_ORIGINS, PRELOAD_EMBEDDINGS_ON_STARTUP
+from .config import ALLOWED_ORIGINS, API_KEY, PRELOAD_EMBEDDINGS_ON_STARTUP
 from .rag_pipeline import rag_pipeline
 from .qdrant_conn import close_qdrant_client, get_qdrant_client
 from .reranker import preload_reranker
@@ -58,7 +58,14 @@ def preload_all_models() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(f"Lifespan starting. Preload setting: {PRELOAD_EMBEDDINGS_ON_STARTUP}")
-    
+
+    if API_KEY is None:
+        logger.warning(
+            "INVENIOAI_API_KEY is not set - all endpoints (upload, query, "
+            "document management, metrics) are unauthenticated. Set it before "
+            "deploying publicly."
+        )
+
     if not PRELOAD_EMBEDDINGS_ON_STARTUP:
         logger.info("Embedding preload skipped (INVENIOAI_PRELOAD_EMBEDDINGS=0)")
     else:
