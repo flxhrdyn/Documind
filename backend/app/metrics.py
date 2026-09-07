@@ -172,60 +172,55 @@ def sync_indexed_docs_count(count: int) -> None:
             save_metrics(metrics)
 
 
-def get_avg_response_time() -> float:
-    """Return average total response time."""
+def _avg_per_query(field: str, ndigits: int = 2) -> float:
+    """Average a cumulative metrics field over total_queries."""
     metrics = load_metrics()
     if metrics["total_queries"] == 0:
         return 0.0
-    return round(metrics["total_response_time"] / metrics["total_queries"], 2)
+    return round(metrics[field] / metrics["total_queries"], ndigits)
+
+
+def _pct_of_total_response_time(field: str) -> float:
+    """A cumulative metrics field as a percentage of total_response_time."""
+    metrics = load_metrics()
+    if metrics["total_response_time"] == 0:
+        return 0.0
+    return round((metrics[field] / metrics["total_response_time"]) * 100, 1)
+
+
+def get_avg_response_time() -> float:
+    """Return average total response time."""
+    return _avg_per_query("total_response_time")
 
 
 def get_avg_retrieval_time() -> float:
     """Return average retrieval time."""
-    metrics = load_metrics()
-    if metrics["total_queries"] == 0:
-        return 0.0
-    return round(metrics["total_retrieval_time"] / metrics["total_queries"], 2)
+    return _avg_per_query("total_retrieval_time")
 
 
 def get_avg_generation_time() -> float:
     """Return average generation time."""
-    metrics = load_metrics()
-    if metrics["total_queries"] == 0:
-        return 0.0
-    return round(metrics["total_generation_time"] / metrics["total_queries"], 2)
+    return _avg_per_query("total_generation_time")
 
 
 def get_avg_docs_retrieved() -> float:
     """Return average number of retrieved documents per query."""
-    metrics = load_metrics()
-    if metrics["total_queries"] == 0:
-        return 0.0
-    return round(metrics["total_docs_retrieved"] / metrics["total_queries"], 1)
+    return _avg_per_query("total_docs_retrieved", ndigits=1)
 
 
 def get_avg_chunks_processed() -> float:
     """Return average number of chunks processed per query."""
-    metrics = load_metrics()
-    if metrics["total_queries"] == 0:
-        return 0.0
-    return round(metrics["total_chunks_processed"] / metrics["total_queries"], 1)
+    return _avg_per_query("total_chunks_processed", ndigits=1)
 
 
 def get_retrieval_efficiency() -> float:
     """Return retrieval time as a percentage of total time."""
-    metrics = load_metrics()
-    if metrics["total_response_time"] == 0:
-        return 0.0
-    return round((metrics["total_retrieval_time"] / metrics["total_response_time"]) * 100, 1)
+    return _pct_of_total_response_time("total_retrieval_time")
 
 
 def get_generation_efficiency() -> float:
     """Return generation time as a percentage of total time."""
-    metrics = load_metrics()
-    if metrics["total_response_time"] == 0:
-        return 0.0
-    return round((metrics["total_generation_time"] / metrics["total_response_time"]) * 100, 1)
+    return _pct_of_total_response_time("total_generation_time")
 
 
 def reset_metrics() -> None:
