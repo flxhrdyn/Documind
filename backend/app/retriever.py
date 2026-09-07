@@ -12,17 +12,13 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.documents import Document
-from langchain_core.prompts import PromptTemplate
-from langchain_classic.retrievers.multi_query import MultiQueryRetriever
 from langchain_qdrant import QdrantVectorStore, RetrievalMode
 from qdrant_client import QdrantClient
 
 from .cache_manager import CacheManager
 from .embeddings import get_embeddings, get_sparse_embeddings
-from .llm import get_llm
 from .config import (
     GROQ_API_KEY,
-    NUM_FUSION_QUERIES,
     QDRANT_COLLECTION,
     RETRIEVAL_K,
     USE_HYBRID_SEARCH,
@@ -32,10 +28,7 @@ from .qdrant_conn import get_qdrant_client
 
 logger = logging.getLogger(__name__)
 
-# Default to quieter logs; let the application configure logging if needed.
-logging.getLogger("langchain.retrievers.multi_query").setLevel(logging.WARNING)
-
-_RetrieverStack = Tuple[MultiQueryRetriever, QdrantVectorStore, QdrantClient]
+_RetrieverStack = Tuple[Any, QdrantVectorStore, QdrantClient]
 _retriever_cache: Optional[_RetrieverStack] = None
 _retriever_cache_version: Optional[float] = None
 _retriever_cache_lock = threading.Lock()
@@ -135,17 +128,7 @@ def build_retriever() -> _RetrieverStack:
         search_kwargs=search_kwargs
     )
 
-    # MultiQuery Retriever (reuses the shared Groq LLM singleton)
-    prompt = PromptTemplate(
-        input_variables=["question"],
-        template=f"You are an AI language model assistant. Your task is to generate {NUM_FUSION_QUERIES} different versions of the given user question to retrieve relevant documents from a vector database. By generating multiple perspectives on the user question, your goal is to help the user overcome some of the limitations of distance-based similarity search. Provide these alternative questions separated by newlines. Original question: {{question}}"
-    )
-
-    retriever = MultiQueryRetriever.from_llm(
-        retriever=base_retriever,
-        llm=get_llm(),
-        prompt=prompt
-    )
+    retriever = base_retriever
 
     logger.debug("Retriever ready (collection=%s, k=%s, mode=%s)",
                  QDRANT_COLLECTION, RETRIEVAL_K, "hybrid" if USE_HYBRID_SEARCH else "dense")
@@ -157,16 +140,34 @@ def build_retriever() -> _RetrieverStack:
     return stack
 
 
+def _dedup_by_content(doc_lists: List[List[Document]]) -> List[Document]:
+    """Flatten and dedupe retrieved docs by page_content, preserving first-seen
+    order (matches MultiQueryRetriever's default unique-union behavior)."""
+    seen: set[str] = set()
+    result: List[Document] = []
+    for docs in doc_lists:
+        for doc in docs:
+            if doc.page_content not in seen:
+                seen.add(doc.page_content)
+                result.append(doc)
+    return result
+
+
 def retrieve_documents(
     query: str,
     *,
-    dense_retriever: MultiQueryRetriever, # Keeping name for compatibility, but it handles hybrid
+    dense_retriever: Any, # Keeping name for compatibility, but it handles hybrid
     client: QdrantClient,
+    fusion_queries: List[str] = (),
 ) -> Tuple[List[Document], Dict[str, Any]]:
-    """Retrieve documents using the native hybrid strategy (if enabled)."""
+    """Retrieve documents for the standalone query plus its fusion variations
+    (if any), deduped by content, using the native hybrid strategy (if enabled)."""
 
-    docs = dense_retriever.invoke(query)
-    
+    doc_lists = [dense_retriever.invoke(query)]
+    for fusion_query in fusion_queries:
+        doc_lists.append(dense_retriever.invoke(fusion_query))
+    docs = _dedup_by_content(doc_lists)
+
     metadata: Dict[str, Any] = {
         "mode": "hybrid-native" if USE_HYBRID_SEARCH else "dense",
         "count": len(docs),
@@ -177,13 +178,17 @@ def retrieve_documents(
 
 async def retrieve_documents_async(
     query: str,
-    dense_retriever: MultiQueryRetriever,
+    dense_retriever: Any,
     client: QdrantClient,
+    fusion_queries: List[str] = (),
 ) -> Tuple[List[Document], Dict[str, Any]]:
-    """Retrieve documents asynchronously using the native hybrid strategy."""
-    
-    docs = await dense_retriever.ainvoke(query)
-    
+    """Async counterpart of `retrieve_documents`."""
+
+    doc_lists = [await dense_retriever.ainvoke(query)]
+    for fusion_query in fusion_queries:
+        doc_lists.append(await dense_retriever.ainvoke(fusion_query))
+    docs = _dedup_by_content(doc_lists)
+
     metadata: Dict[str, Any] = {
         "mode": "hybrid-native" if USE_HYBRID_SEARCH else "dense",
         "count": len(docs),
