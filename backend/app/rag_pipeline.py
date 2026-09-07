@@ -14,7 +14,7 @@ import hashlib
 from .cache_manager import CacheManager
 from typing import Any
 
-from .config import RETRIEVAL_K, SEMANTIC_CACHE_THRESHOLD
+from .config import NUM_FUSION_QUERIES, RETRIEVAL_K, SEMANTIC_CACHE_THRESHOLD
 from .llm import get_llm as _get_llm
 from .qdrant_conn import close_qdrant_client, is_qdrant_client_closed_error
 from .reranker import rerank
@@ -29,7 +29,9 @@ logger = logging.getLogger(__name__)
 
 
 QUERY_REWRITE_PROMPT = """
-Rewrite the question into a standalone question.
+Rewrite the question into a standalone question, then generate {num_fusion} alternate
+phrasings of that standalone question to help retrieve relevant documents from a vector
+database by covering different perspectives on the same question.
 
 Chat History:
 {history}
@@ -37,7 +39,9 @@ Chat History:
 Question:
 {question}
 
-Standalone Question:
+Respond with exactly {num_fusion_plus_one} lines, one question per line, nothing else:
+- Line 1: the standalone question.
+- Lines 2-{num_fusion_plus_one}: the alternate phrasings.
 """
 
 
@@ -130,10 +134,19 @@ def format_history(history: Any, max_items: int = 5) -> str:
     return "\n".join(str(item) for item in items)
 
 
-def rewrite_query(question: str, history: Any) -> str:
-    """Rewrite a question into a standalone query with local caching."""
-    # Check if we have a cached standalone version for this question + simplified history
-    # For standalone questions (empty history), we can cache the result long-term
+def _parse_rewrite_response(raw: str, original_question: str) -> tuple[str, list[str]]:
+    """Split the combined rewrite+fusion LLM response into
+    (standalone_query, fusion_queries), falling back to the original
+    question if the response is empty or malformed."""
+    lines = [line.strip() for line in raw.strip().splitlines() if line.strip()]
+    if not lines:
+        return original_question, []
+    standalone = lines[0] if len(lines[0]) >= 2 else original_question
+    return standalone, lines[1 : 1 + NUM_FUSION_QUERIES]
+
+
+def rewrite_query(question: str, history: Any) -> tuple[str, list[str]]:
+    """Rewrite a question into a standalone query plus fusion variations, with local caching."""
     cache = get_cache_manager()
     history_text = format_history(history)
     # Key must hash the same history text used to generate the rewrite, or two
@@ -143,48 +156,49 @@ def rewrite_query(question: str, history: Any) -> str:
 
     cached_rewrite = cache.get(rewrite_cache_key)
     if cached_rewrite:
-        return cached_rewrite
+        return cached_rewrite["standalone"], cached_rewrite["fusion"]
 
     prompt = QUERY_REWRITE_PROMPT.format(
         history=history_text,
         question=question,
+        num_fusion=NUM_FUSION_QUERIES,
+        num_fusion_plus_one=NUM_FUSION_QUERIES + 1,
     )
-    res = _get_llm().invoke(prompt).content.strip()
-    
-    # Fallback
-    if len(res) < 2:
-        res = question
-        
-    # Cache the rewrite result for 1 hour
-    cache.set(rewrite_cache_key, res, ttl=3600)
-    return res
+    raw = _get_llm().invoke(prompt).content
+    standalone, fusion = _parse_rewrite_response(raw, question)
+
+    cache.set(rewrite_cache_key, {"standalone": standalone, "fusion": fusion}, ttl=3600)
+    return standalone, fusion
 
 
-async def rewrite_query_async(query: str, history: list[str]) -> str:
-    """Rewrite query to make it standalone using context asynchronously with caching."""
+async def rewrite_query_async(query: str, history: list[str]) -> tuple[str, list[str]]:
+    """Async counterpart of `rewrite_query` - same combined rewrite+fusion prompt and caching."""
     cache = get_cache_manager()
     history_text = format_history(history)
     rewrite_cache_key = f"rewrite_cache:{hashlib.md5(f'{query}:{history_text}'.encode()).hexdigest()}"
 
     cached_rewrite = cache.get(rewrite_cache_key)
     if cached_rewrite:
-        return cached_rewrite
+        return cached_rewrite["standalone"], cached_rewrite["fusion"]
 
-    prompt = QUERY_REWRITE_PROMPT.format(question=query, history=history_text)
-
+    prompt = QUERY_REWRITE_PROMPT.format(
+        history=history_text,
+        question=query,
+        num_fusion=NUM_FUSION_QUERIES,
+        num_fusion_plus_one=NUM_FUSION_QUERIES + 1,
+    )
     try:
         llm = _get_llm()
         response = await llm.ainvoke(prompt)
         content = response.content
-        if isinstance(content, str):
-            rewritten = content.strip()
-            res = rewritten if rewritten and len(rewritten) > 1 else query
-            cache.set(rewrite_cache_key, res, ttl=3600)
-            return res
-        return query
+        if not isinstance(content, str):
+            return query, []
+        standalone, fusion = _parse_rewrite_response(content, query)
+        cache.set(rewrite_cache_key, {"standalone": standalone, "fusion": fusion}, ttl=3600)
+        return standalone, fusion
     except Exception as e:
         logger.error(f"Query rewrite failed: {e}")
-        return query
+        return query, []
 
 
 def _lookup_cache(
