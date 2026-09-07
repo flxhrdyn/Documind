@@ -1,0 +1,6 @@
+# Keep in sync with INVENIOAI_MAX_UPLOAD_SIZE_MB (backend/app/config.py
+# MAX_UPLOAD_SIZE_MB, default 100). Streamlit's own upload cap otherwise
+# defaults to 200MB regardless of that setting, so a file between the two
+# limits uploads in full before the app rejects it.
+[server]
+maxUploadSize = 100

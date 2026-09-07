@@ -60,8 +60,10 @@ metrics.json
 metrics.json.lock
 *.pkl
 
-# Streamlit
-.streamlit/
+# Streamlit (keep config.toml tracked; secrets.toml and any other local
+# Streamlit state stay ignored)
+.streamlit/*
+!.streamlit/config.toml
 
 # Logs
 *.log
