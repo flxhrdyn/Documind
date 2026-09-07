@@ -42,4 +42,10 @@ asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["backend/tests"]
 pythonpath = ["backend"]
+filterwarnings = [
+    "ignore:.*mean pooling instead of CLS embedding.*:UserWarning",
+    "ignore:.*llama-cloud-services.* is deprecated.*:DeprecationWarning",
+    "ignore:.*'llama-parse' package is deprecated.*:DeprecationWarning",
+]
+
 

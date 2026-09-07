@@ -185,3 +185,34 @@ def get_metrics() -> Dict[str, Any]:
 @app.get("/")
 def root():
     return {"status": "InvenioAI API running"}
+
+
+@app.get("/healthz", tags=["system"])
+def healthz() -> Dict[str, str]:
+    """Liveness probe: verifies that the FastAPI application is alive."""
+    return {"status": "healthy", "service": "InvenioAI"}
+
+
+@app.get("/readyz", tags=["system"])
+def readyz() -> Dict[str, Any]:
+    """Readiness probe: verifies that backing services (Qdrant) and models are operational."""
+    try:
+        from .qdrant_conn import get_qdrant_client
+        from .config import LLM_MODEL, QDRANT_COLLECTION
+
+        client = get_qdrant_client()
+        collections = [c.name for c in client.get_collections().collections]
+        return {
+            "status": "ready",
+            "database": {
+                "qdrant": "connected",
+                "collection_exists": QDRANT_COLLECTION in collections,
+            },
+            "llm_model": LLM_MODEL,
+        }
+    except Exception as e:
+        logger.error(f"Readiness probe failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Service Unavailable: {e}",
+        )
