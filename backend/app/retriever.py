@@ -156,7 +156,7 @@ def _dedup_by_content(doc_lists: List[List[Document]]) -> List[Document]:
 def retrieve_documents(
     query: str,
     *,
-    dense_retriever: Any, # Keeping name for compatibility, but it handles hybrid
+    dense_retriever: Any,
     client: QdrantClient,
     fusion_queries: List[str] = (),
 ) -> Tuple[List[Document], Dict[str, Any]]:

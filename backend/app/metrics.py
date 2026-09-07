@@ -138,7 +138,7 @@ def _log_query_locked(
         
         metrics["query_history"].append({
             "timestamp": datetime.now().isoformat(),
-            "question": question[:100],  # Truncate long questions
+            "question": question[:100],
             "response_time": round(response_time, 2),
             "retrieval_time": round(retrieval_time, 2),
             "generation_time": round(generation_time, 2),
