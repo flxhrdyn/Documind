@@ -8,12 +8,16 @@ services:
       - "8000:8000"
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY}
+      - LLAMA_CLOUD_API_KEY=${LLAMA_CLOUD_API_KEY}
+      - INVENIOAI_API_KEY=${INVENIOAI_API_KEY:-}
       - CACHE_TYPE=redis
       - REDIS_URL=redis://redis:6379/0
-      - INVENIOAI_LLM_MODEL=llama3-8b-8192
+      - INVENIOAI_LLM_MODEL=${INVENIOAI_LLM_MODEL:-openai/gpt-oss-20b}
+      - HF_HOME=/app/.cache/huggingface
+      - FASTEMBED_CACHE_PATH=/app/.cache/fastembed
     volumes:
       - ./backend/.cache:/app/.cache
-      - ./backend/qdrant_data:/app/qdrant_data
+      - ./backend/qdrant_storage:/app/qdrant_storage
     depends_on:
       - redis
 
@@ -25,6 +29,7 @@ services:
     environment:
       # Pass internal docker network backend URL to Streamlit
       - INVENIOAI_API_BASE_URL=http://backend:8000
+      - INVENIOAI_API_KEY=${INVENIOAI_API_KEY:-}
     depends_on:
       - backend
 

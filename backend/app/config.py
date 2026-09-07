@@ -130,7 +130,7 @@ IR_RELEVANCE_THRESHOLD = _env_float("INVENIOAI_IR_RELEVANCE_THRESHOLD", default=
 SEMANTIC_CACHE_THRESHOLD = _env_float("INVENIOAI_SEMANTIC_CACHE_THRESHOLD", default=0.92, min_value=0.0)
 
 # Models
-LLM_MODEL = _env_str("INVENIOAI_LLM_MODEL", "llama-3.1-8b-instant")
+LLM_MODEL = _env_str("INVENIOAI_LLM_MODEL", "openai/gpt-oss-20b")
 EMBEDDING_MODEL = _env_str("INVENIOAI_EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 RERANKER_MODEL = _env_str("INVENIOAI_RERANKER_MODEL", "ms-marco-MiniLM-L-12-v2")
 

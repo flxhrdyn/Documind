@@ -173,8 +173,8 @@ The application is configured via `.env` (see `.env.example` for the full list).
 
 - `GROQ_API_KEY` - required for LLM generation and query rewriting.
 - `LLAMA_CLOUD_API_KEY` - required for PDF parsing during indexing.
-- `QDRANT_URL` / `QDRANT_API_KEY` - optional; defaults to local storage at `backend/qdrant_data/`.
-- `INVENIOAI_LLM_MODEL` - Groq model id (default `llama-3.1-8b-instant`).
+- `QDRANT_URL` / `QDRANT_API_KEY` - optional; defaults to local storage at `backend/qdrant_storage/`.
+- `INVENIOAI_LLM_MODEL` - Groq model id (default `openai/gpt-oss-20b`).
 - `INVENIOAI_ENABLE_HYBRID_SEARCH` - toggle dense+sparse mode (default `1`).
 - `INVENIOAI_SEMANTIC_CACHE_THRESHOLD` - L2 cache similarity threshold (default `0.92`).
 - `INVENIOAI_DELETE_UPLOADED_PDFS` - remove local PDFs after indexing (default `0`).
