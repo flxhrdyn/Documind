@@ -30,9 +30,12 @@ logger = logging.getLogger(__name__)
 
 
 def strip_running_headers_footers(llama_docs: list) -> list:
-    """Mendeteksi dan menghapus running headers/footers secara otomatis.
-    Hanya menghapus baris jika terletak di posisi terluar (top 2 / bottom 2 lines)
-    pada banyak halaman, dan bukan merupakan heading markdown (#).
+    """Detect and remove running headers/footers that repeat across pages.
+
+    Only removes a line if it sits in the outermost position (top 2 / bottom
+    2 lines) on many pages, and isn't a real markdown heading (#) - genuine
+    headings can coincidentally repeat (e.g. a recurring section name) but
+    aren't page-furniture noise.
     """
     total_pages = len(llama_docs)
     if total_pages < 3:
@@ -41,42 +44,41 @@ def strip_running_headers_footers(llama_docs: list) -> list:
     top_line_counts = Counter()
     bottom_line_counts = Counter()
 
-    # 1. Hitung frekuensi HANYA untuk baris di posisi terluar (top 2 / bottom 2)
+    # Only count lines in the outermost position (top 2 / bottom 2) - a
+    # repeating line elsewhere on the page is more likely real content.
     for doc in llama_docs:
         lines = [line.strip() for line in doc.text.split("\n") if line.strip()]
         if not lines:
             continue
 
-        # Periksa 2 baris teratas (calon Running Header)
         for line in set(lines[:2]):
-            if not line.startswith("#"):  # Abaikan heading markdown asli
+            if not line.startswith("#"):
                 top_line_counts[line] += 1
 
-        # Periksa 2 baris terbawah (calon Running Footer)
         if len(lines) > 2:
             for line in set(lines[-2:]):
-                if not line.startswith("#"):  # Abaikan heading markdown asli
+                if not line.startswith("#"):
                     bottom_line_counts[line] += 1
 
-    # 2. Tentukan threshold frekuensi tinggi (minimal muncul di 15% halaman)
+    # A line must repeat on at least 15% of pages (min 3) to count as running
+    # header/footer noise rather than a one-off coincidence.
     threshold = max(3, int(total_pages * 0.15))
-    
+
     running_headers = {line for line, count in top_line_counts.items() if count >= threshold}
     running_footers = {line for line, count in bottom_line_counts.items() if count >= threshold}
 
-    # 3. Eksekusi penghapusan bersyarat hanya pada posisi terluar tiap halaman
     for doc in llama_docs:
         lines = doc.text.split("\n")
         non_empty_indices = [i for i, line in enumerate(lines) if line.strip()]
-        
+
         indices_to_remove = set()
 
-        # Cek apakah 2 baris teratas berisi running header terdeteksi
         for idx in non_empty_indices[:2]:
             line_str = lines[idx].strip()
             is_match = line_str in running_headers
-            
-            # Cek robust substring match jika exact match gagal
+
+            # Fall back to substring match: OCR/parsing noise can add or drop
+            # a stray character so an exact match sometimes misses.
             if not is_match:
                 for rh in running_headers:
                     if len(rh) >= 10 and (rh in line_str or line_str in rh):
@@ -85,13 +87,11 @@ def strip_running_headers_footers(llama_docs: list) -> list:
             if is_match:
                 indices_to_remove.add(idx)
 
-        # Cek apakah 2 baris terbawah berisi running footer terdeteksi
         if len(non_empty_indices) > 2:
             for idx in non_empty_indices[-2:]:
                 line_str = lines[idx].strip()
                 is_match = line_str in running_footers
-                
-                # Cek robust substring match jika exact match gagal
+
                 if not is_match:
                     for rf in running_footers:
                         if len(rf) >= 10 and (rf in line_str or line_str in rf):
@@ -100,7 +100,6 @@ def strip_running_headers_footers(llama_docs: list) -> list:
                 if is_match:
                     indices_to_remove.add(idx)
 
-        # Rekonstruksi teks halaman tanpa baris noise tersebut
         cleaned_lines = [line for idx, line in enumerate(lines) if idx not in indices_to_remove]
         cleaned_text = "\n".join(cleaned_lines)
         if hasattr(doc, "set_content"):
@@ -158,10 +157,8 @@ def process_pdf_documents(
     if status_callback:
         status_callback("parsing")
         
-    # Use LlamaParse with high-fidelity settings
     from llama_parse import LlamaParse
-    
-    # 1. Initialize Parser
+
     parser = LlamaParse(
         result_type="markdown", 
         num_workers=4,
@@ -176,9 +173,9 @@ def process_pdf_documents(
         )
     )
     
-    # 2. Load Documents (Cloud Parsing), falling back to local plain-text
-    # extraction if the LlamaParse API is unreachable/rate-limited/down so a
-    # single external dependency can't take indexing out entirely.
+    # Fall back to local plain-text extraction if the LlamaParse API is
+    # unreachable/rate-limited/down so a single external dependency can't take
+    # indexing out entirely.
     try:
         llama_docs = parser.load_data(file_path)
     except Exception:
@@ -189,12 +186,10 @@ def process_pdf_documents(
         )
         llama_docs = _extract_pdf_locally(file_path)
 
-    # Deteksi dan bersihkan running headers/footers secara otomatis
     llama_docs = strip_running_headers_footers(llama_docs)
-    
+
     all_header_splits = []
-    
-    # 3. Structure-Aware Splitting (Step 1: Headers)
+
     headers_to_split_on = [
         ("#", "Header 1"),
         ("##", "Header 2"),
@@ -202,41 +197,38 @@ def process_pdf_documents(
     ]
     header_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on)
 
-    # State pelacakan header aktif untuk pewarisan lintas halaman
+    # Carries the most recent Header 1/2/3 across pages/splits, so a chunk
+    # deep in a section (with no heading of its own) still inherits the
+    # section's headers instead of losing them.
     active_headers = {"Header 1": "", "Header 2": "", "Header 3": ""}
 
     for i, doc in enumerate(llama_docs):
-        # Ambil nomor halaman dari metadata LlamaIndex (dimulai dari 1)
         page_num = doc.metadata.get("page_number", str(i + 1))
-        
-        # Split per halaman agar metadata 'page_label' tidak tercampur
+
+        # Split per page so 'page_label' metadata isn't mixed across pages.
         page_splits = header_splitter.split_text(doc.text)
-        
+
         for split in page_splits:
-            # 1. Deteksi apakah split baru memperkenalkan header baru
             introduced_h1 = split.metadata.get("Header 1", "")
             introduced_h2 = split.metadata.get("Header 2", "")
             introduced_h3 = split.metadata.get("Header 3", "")
-            
-            # Jika ada Header 1 baru, reset level di bawahnya
+
+            # A new higher-level heading resets any lower-level heading that
+            # was carried over from an earlier section.
             if introduced_h1:
                 active_headers["Header 1"] = introduced_h1
                 active_headers["Header 2"] = ""
                 active_headers["Header 3"] = ""
-            # Jika ada Header 2 baru, reset level di bawahnya
             if introduced_h2:
                 active_headers["Header 2"] = introduced_h2
                 active_headers["Header 3"] = ""
-            # Jika ada Header 3 baru, perbarui
             if introduced_h3:
                 active_headers["Header 3"] = introduced_h3
-                
-            # 2. Terapkan active_headers yang mengalir jika belum ada di split ini
+
             for h_level in ["Header 1", "Header 2", "Header 3"]:
                 if not split.metadata.get(h_level) and active_headers[h_level]:
                     split.metadata[h_level] = active_headers[h_level]
 
-            # 3. Update metadata esensial
             split.metadata.update({
                 "source": path.name,
                 "source_file": path.name,  # Essential for the /documents API
@@ -252,13 +244,10 @@ def process_pdf_documents(
 
             all_header_splits.append(split)
     
-    # 4. Semantic/Length-based Splitting (Step 2)
-    # Using header_splits as input to ensure headers are preserved in chunks.
-    # IMPORTANT: We use separators that do NOT split inside markdown table rows.
-    # Markdown tables use single \n between rows — splitting on \n would tear
-    # table rows from their headers and produce incomplete, misleading chunks.
-    # By using \n\n (paragraph break) and \n| (new table start) as primary
-    # separators, we keep each table's rows together in one chunk.
+    # Markdown tables use a single \n between rows, so splitting on \n would
+    # tear rows from their headers and produce incomplete, misleading chunks.
+    # \n\n (paragraph break) and \n| (new table row) as primary separators
+    # keep each table's rows together in one chunk instead.
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
         chunk_overlap=CHUNK_OVERLAP,
@@ -287,9 +276,8 @@ def process_pdf_documents(
         ):
             chunk.page_content = f"{table_header}\n{chunk.page_content}"
 
-    # Final metadata normalization (Ensure 'Header 1' etc are consistent)
+    # Qdrant rejects None payload values, so normalize them to empty strings.
     for chunk in final_chunks:
-        # Ensure we don't have None values in metadata which can break Qdrant
         for k, v in list(chunk.metadata.items()):
             if v is None:
                 chunk.metadata[k] = ""
@@ -367,7 +355,6 @@ def index_documents(
     total_start = time.monotonic()
     logger.info("Indexing PDF: %s", path.name)
 
-    # Initialize Qdrant Collection
     client = get_qdrant_client()
     embeddings = get_embeddings()
     sparse_embeddings_model = get_sparse_embeddings()
@@ -375,7 +362,6 @@ def index_documents(
     existing = [c.name for c in client.get_collections().collections]
     if QDRANT_COLLECTION not in existing:
         logger.info("Creating collection: %s", QDRANT_COLLECTION)
-        # Dummy vector to get dimension
         dim = len(embeddings.embed_query("test"))
         client.create_collection(
             collection_name=QDRANT_COLLECTION,
@@ -389,7 +375,6 @@ def index_documents(
     # embedding model doesn't match what this collection was built with.
     _check_or_record_embedding_model(client, embeddings, sparse_embeddings_model)
 
-    # Process (Load + Semantic Chunk)
     chunks = process_pdf_documents(file_path, status_callback=status_callback)
     logger.info("Created %d semantic chunks", len(chunks))
 
@@ -408,10 +393,7 @@ def index_documents(
             texts = [c.page_content for c in batch]
             metadatas = [c.metadata for c in batch]
 
-            # Generate Dense Embeddings
             vectors = embeddings.embed_documents(texts)
-
-            # Generate Sparse Embeddings
             sparse_vectors = sparse_embeddings_model.embed_documents(texts)
 
             points = []

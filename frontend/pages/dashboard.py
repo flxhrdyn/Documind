@@ -36,9 +36,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Mark this page as active so the chat page can cancel any in-flight UI updates.
-st.session_state["invenioai_active_page"] = "dashboard"
-
 # ── Design System (mirrors main app) ─────────────────────────────────────────
 
 # Plotly charts will use the default 'streamlit' theme for best adaptivity
@@ -91,7 +88,6 @@ header {{ background: transparent !important; }}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
 def _fmt(val: float, pct: bool = True) -> str:
     if val is None:
         return "—"
@@ -108,7 +104,6 @@ def _color_for(val: float) -> str:
     return COLORS["error"]
 
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.title("InvenioAI")
@@ -150,7 +145,6 @@ avg_ret  = (raw.get("total_retrieval_time", 0) / total_q) if total_q else 0
 avg_gen  = (raw.get("total_generation_time", 0) / total_q) if total_q else 0
 avg_docs = (raw.get("total_docs_retrieved", 0) / total_q) if total_q else 0
 
-# ── Header ────────────────────────────────────────────────────────────────────
 # ── Header ────────────────────────────────────────────────────────────────────
 st.title("📊 Retrieval Metrics Dashboard")
 st.write(f"Evaluate RAG retrieval quality. **@k = {k_val}**, **threshold = {threshold:.2f}**. ({evaluated} / {total_q} queries evaluated)")

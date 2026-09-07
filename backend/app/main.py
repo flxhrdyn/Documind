@@ -57,7 +57,6 @@ def preload_all_models() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup logic
     logger.info(f"Lifespan starting. Preload setting: {PRELOAD_EMBEDDINGS_ON_STARTUP}")
     
     if not PRELOAD_EMBEDDINGS_ON_STARTUP:
@@ -83,8 +82,7 @@ async def lifespan(app: FastAPI):
             logger.error(f"Critical failure during metrics reconciliation: {e}", exc_info=True)
             
     yield
-    
-    # Shutdown logic
+
     close_qdrant_client()
 
 
@@ -127,15 +125,11 @@ def query(q: Query) -> Dict[str, Any]:
 @app.post("/query/stream", tags=["query"], dependencies=[Depends(require_api_key)])
 async def query_stream_endpoint(request: Query):
     """Execute a query and stream the response using Server-Sent Events (SSE)."""
-    
-    # We use a generator that returns the async pipeline stream
+
     async def event_generator():
         from .rag_pipeline import rag_pipeline_stream_async
         async for chunk in rag_pipeline_stream_async(request.question, request.history):
-            # The pipeline yields JSON strings with a trailing newline
-            # We format it as SSE "data: <json>\n\n"
-            json_str = chunk.strip()
-            yield f"data: {json_str}\n\n"
+            yield f"data: {chunk.strip()}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -164,8 +158,6 @@ async def sync_metrics_endpoint():
 def get_metrics() -> Dict[str, Any]:
     """Return aggregate RAG performance and quality metrics."""
     metrics = load_metrics()
-    
-    # Compute aggregate IR metrics
     ir_metrics = compute_ir_metrics(metrics.get("query_history", []))
     
     return {
@@ -179,7 +171,7 @@ def get_metrics() -> Dict[str, Any]:
         "retrieval_efficiency_pct": get_retrieval_efficiency(),
         "generation_efficiency_pct": get_generation_efficiency(),
         "ir_quality": ir_metrics,
-        "query_history": metrics.get("query_history", [])[-10:]  # Last 10 for quick view
+        "query_history": metrics.get("query_history", [])[-10:]
     }
 
 

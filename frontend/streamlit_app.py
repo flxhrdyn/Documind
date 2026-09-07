@@ -206,8 +206,6 @@ def _render_assistant_message(reply: str) -> None:
 
     placeholder.markdown(reply)
 
-# Active page tracking is now handled by Streamlit's multi-page system
-
 
 # ── Design System ─────────────────────────────────────────────────────────────
 
@@ -375,7 +373,6 @@ def _fetch_indexed_documents(api_base_url: str) -> tuple[list[str], bool]:
     """
     now = time.time()
 
-    # Check manual cache in session_state
     if "docs_cache" in st.session_state:
         cache_data, cache_time = st.session_state.docs_cache
         if now - cache_time < 30: # 30s TTL
@@ -395,8 +392,6 @@ def _fetch_indexed_documents(api_base_url: str) -> tuple[list[str], bool]:
     else:
         docs = [str(d) for d in (payload.get("documents") or []) if d]
 
-    # ONLY cache if we found documents.
-    # If empty, don't cache so we keep polling on next rerun.
     if docs:
         st.session_state.docs_cache = (docs, now)
     return docs, True
@@ -567,7 +562,6 @@ with st.sidebar:
     st.title("InvenioAI")
     st.caption("AI · Document Intelligence")
 
-    # Upload Section
     st.subheader("📤 Upload PDF")
 
     delete_after_index = (
@@ -618,7 +612,6 @@ with st.sidebar:
 
 
 
-    # Knowledge Base
     st.subheader("🧠 Knowledge Base")
     indexed_files, backend_reachable = get_indexed_files()
     if indexed_files:
@@ -879,11 +872,10 @@ if _is_chat_active():
                     if isinstance(thoughts, list):
                         st.markdown("\n".join(thoughts))
                     else:
-                        # Ultra-aggressive cleanup: remove all stars anywhere near Step X
+                        # Strip any bold markers the model added inconsistently, then
+                        # re-apply bolding/spacing uniformly to "Step N:" headings.
                         import re
-                        # 1. Remove all stars first to get raw text
                         clean_thoughts = thoughts.replace("**", "")
-                        # 2. Format Step X: with proper bolding and spacing
                         clean_thoughts = re.sub(r'(?i)(Step\s*\d+:)', r'\n\n**\1**', clean_thoughts)
                         st.markdown(clean_thoughts.strip())
             
@@ -911,7 +903,6 @@ if _is_chat_active():
             # Interactive Sources for assistant messages
             sources = message.get("sources")
             if sources and isinstance(sources, list):
-                # Group sources by filename
                 from collections import defaultdict
                 grouped = defaultdict(list)
                 for s in sources:

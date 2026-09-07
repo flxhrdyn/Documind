@@ -151,7 +151,6 @@ def _index_uploaded_pdf(
             detail=f"Document with identical content is already indexed as '{duplicate_of}'",
         )
 
-    # Index into Qdrant.
     try:
         index_documents(file_path, content_hash=content_hash, status_callback=status_callback)
     except ValueError as exc:
@@ -341,17 +340,14 @@ def delete_document(filename: str, retry: bool = True):
     safe_name = os.path.basename(filename)
     client = get_qdrant_client()
     try:
-        # Check if collection exists first
         try:
             collections = client.get_collections().collections
             existing = [c.name for c in collections]
             if QDRANT_COLLECTION not in existing:
-                # Collection doesn't exist, so document isn't there
                 return {"status": "success", "message": f"Document '{safe_name}' not found in index (collection missing)"}
         except Exception as e:
             logger.warning("Failed to check collection existence: %s", e)
 
-        # Ensure payload indices exist for both fields we filter on
         try:
             client.create_payload_index(
                 collection_name=QDRANT_COLLECTION,
@@ -370,7 +366,6 @@ def delete_document(filename: str, retry: bool = True):
         except Exception:
             pass
 
-        # Qdrant delete call using a filter on both metadata fields
         client.delete(
             collection_name=QDRANT_COLLECTION,
             points_selector=models.FilterSelector(
@@ -388,8 +383,7 @@ def delete_document(filename: str, retry: bool = True):
                 )
             ),
         )
-        
-        # Also try to delete from local UPLOAD_DIR if it exists
+
         file_path = os.path.join(UPLOAD_DIR, safe_name)
         if os.path.exists(file_path):
             try:
@@ -458,7 +452,6 @@ def clear_documents():
             detail=f"Failed to clear vector store: {type(exc).__name__}: {exc}",
         )
 
-    # Clear semantic and deep cache to ensure fresh answers for new documents
     try:
         from .rag_pipeline import get_cache_manager
         get_cache_manager().clear()

@@ -78,33 +78,28 @@ class ThinkingParser:
                     self.inside_thinking = True
                     self.buffer = self.buffer[idx + len(start_tag):]
                     continue
-                
-                # If we have a '<' but not the full start_tag, check if it COULD be the start_tag
+
+                # Partial tag boundary: buffer may hold a truncated "<thinking>"
+                # split across chunks, so a lone "<" can't be emitted yet.
                 if "<" in self.buffer:
                     idx = self.buffer.find("<")
-                    # If there's text before '<', yield it
                     if idx > 0:
                         yield "token", self.buffer[:idx]
                         self.buffer = self.buffer[idx:]
                         continue
-                    
-                    # Buffer starts with '<'. Is it a potential start_tag?
+
                     if len(self.buffer) < len(start_tag):
-                        # Could be start_tag, wait for more data
                         if start_tag.startswith(self.buffer):
                             break
                         else:
-                            # Not a start_tag (e.g. "<b"), yield the "<" and continue
                             yield "token", self.buffer[0]
                             self.buffer = self.buffer[1:]
                             continue
                     else:
-                        # Buffer is long enough but doesn't match start_tag
                         yield "token", self.buffer[0]
                         self.buffer = self.buffer[1:]
                         continue
                 else:
-                    # No '<' at all, yield everything
                     yield "token", self.buffer
                     self.buffer = ""
                     break

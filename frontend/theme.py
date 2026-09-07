@@ -12,8 +12,8 @@ COLORS: dict[str, str] = {
     "success": "#00C9A7",
     "error": "#FF6B6B",
     "warning": "#FFB347",
-    
-    # Restoring Dashboard chart palette to prevent KeyErrors
+
+    # Chart palette consumed by dashboard.py's plots.
     "chart1": "#6C63FF",
     "chart2": "#00C9A7",
     "chart3": "#FFB347",
@@ -24,7 +24,6 @@ COLORS: dict[str, str] = {
     "border": "rgba(128, 128, 128, 0.2)",
 }
 
-# CSS Variables mapping for easier injection
 CSS_VARS = """
 :root {
     --invenio-accent: var(--primary-color);

@@ -1,8 +1,7 @@
 """Shared Groq LLM singleton.
 
-Both the RAG generation step (`rag_pipeline.py`) and the MultiQueryRetriever
-(`retriever.py`) need a Groq chat model. A single cached instance avoids
-recreating a client (and its connection pool) on every request.
+A single cached instance avoids recreating a client (and its connection pool)
+on every request.
 """
 
 from __future__ import annotations
