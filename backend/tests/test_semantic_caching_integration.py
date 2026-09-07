@@ -28,7 +28,7 @@ def test_rag_pipeline_semantic_hit(mock_cache_and_embeds):
     # Semantic match hit
     cache.get_semantic.return_value = "semantic_deep_key"
     
-    with patch("app.rag_pipeline.rewrite_query", return_value="standalone query"), \
+    with patch("app.rag_pipeline.rewrite_query", return_value=("standalone query", [])), \
          patch("app.rag_pipeline._run_rag_pipeline_with_query") as mock_run:
         
         result = rag_pipeline("Same question?", [])
@@ -48,7 +48,7 @@ def test_rag_pipeline_semantic_miss_saves(mock_cache_and_embeds):
     
     real_result = {"answer": "Fresh answer", "sources": [], "metrics": {"docs_retrieved": 3}}
     
-    with patch("app.rag_pipeline.rewrite_query", return_value="standalone query"), \
+    with patch("app.rag_pipeline.rewrite_query", return_value=("standalone query", [])), \
          patch("app.rag_pipeline._run_rag_pipeline_with_query", return_value=real_result):
         
         result = rag_pipeline("New question?", [])
@@ -65,7 +65,7 @@ async def test_rag_pipeline_stream_async_semantic_hit(mock_cache_and_embeds):
     cache.get.side_effect = [None, {"answer": "Async semantic hit", "sources": []}]
     cache.get_semantic.return_value = "sem_key"
     
-    with patch("app.rag_pipeline.rewrite_query_async", return_value="standalone async"):
+    with patch("app.rag_pipeline.rewrite_query_async", return_value=("standalone async", [])):
         
         chunks = []
         async for chunk in rag_pipeline_stream_async("Async question?", []):

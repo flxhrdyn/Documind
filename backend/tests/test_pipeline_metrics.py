@@ -19,7 +19,7 @@ def test_rag_pipeline_logs_metrics_on_full_run():
          patch("app.rag_pipeline.retrieve_documents") as mock_retrieve, \
          patch("app.rag_pipeline.rerank") as mock_rerank, \
          patch("app.rag_pipeline._get_llm") as mock_llm, \
-         patch("app.rag_pipeline.rewrite_query", return_value="standalone"), \
+         patch("app.rag_pipeline.rewrite_query", return_value=("standalone", [])), \
          patch("app.rag_pipeline.get_cache_manager") as mock_cache:
         
         # Setup mocks
@@ -58,7 +58,7 @@ def test_rag_pipeline_logs_metrics_on_cache_hit():
     }
     
     with patch("app.rag_pipeline.get_cache_manager") as mock_cache, \
-         patch("app.rag_pipeline.rewrite_query", return_value="test question"):
+         patch("app.rag_pipeline.rewrite_query", return_value=("test question", [])):
         # L1 exact cache hit
         mock_cache.return_value.get.return_value = cached_data
 
@@ -73,7 +73,7 @@ def test_rag_pipeline_logs_metrics_on_cache_hit():
 @pytest.mark.asyncio
 async def test_rag_pipeline_stream_async_logs_metrics():
     # Mock the async generator parts
-    with patch("app.rag_pipeline.rewrite_query_async", return_value="standalone"), \
+    with patch("app.rag_pipeline.rewrite_query_async", return_value=("standalone", [])), \
          patch("app.rag_pipeline.build_retriever") as mock_retriever_build, \
          patch("app.rag_pipeline.retrieve_documents_async") as mock_retrieve, \
          patch("app.rag_pipeline.rerank", return_value=([Document(page_content="doc1", metadata={"source": "test.pdf"})], [0.9], [0])), \

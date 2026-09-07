@@ -14,7 +14,7 @@ client = TestClient(app)
 def test_query_returns_source_nodes_with_metadata(mock_rerank, mock_retrieve, mock_rewrite, mock_llm, mock_build):
     # Setup mocks
     mock_build.return_value = (MagicMock(), MagicMock(), MagicMock())
-    mock_rewrite.return_value = "standalone query"
+    mock_rewrite.return_value = ("standalone query", [])
     mock_llm.return_value.invoke.return_value.content = "Ini jawaban AI."
     
     # Mock documents with page info

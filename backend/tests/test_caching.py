@@ -20,7 +20,7 @@ def test_rag_pipeline_uses_cache(mock_cache):
     question = "What is AI?"
     history = []
 
-    with patch("app.rag_pipeline.rewrite_query", return_value="what is ai?"):
+    with patch("app.rag_pipeline.rewrite_query", return_value=("what is ai?", [])):
         # Execute
         result = rag_pipeline(question, history)
 
@@ -34,7 +34,7 @@ def test_rag_pipeline_saves_to_cache_on_miss(mock_cache):
     mock_cache.get.return_value = None
 
     with patch("app.rag_pipeline._run_rag_pipeline_with_query") as mock_run, \
-         patch("app.rag_pipeline.rewrite_query", return_value="rewritten"):
+         patch("app.rag_pipeline.rewrite_query", return_value=("rewritten", [])):
         real_result = {"answer": "Real answer", "sources": [], "metrics": {"docs_retrieved": 3}}
         mock_run.return_value = real_result
 
@@ -63,7 +63,7 @@ async def test_rag_pipeline_stream_async_uses_cache(mock_cache):
     history = []
 
     # Execute
-    with patch("app.rag_pipeline.rewrite_query_async", return_value="stream question"):
+    with patch("app.rag_pipeline.rewrite_query_async", return_value=("stream question", [])):
         chunks = []
         async for chunk in rag_pipeline_stream_async(query, history):
             chunks.append(json.loads(chunk.strip()))

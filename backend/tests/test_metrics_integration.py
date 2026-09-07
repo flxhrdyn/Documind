@@ -19,7 +19,7 @@ def test_query_updates_metrics():
          patch("app.rag_pipeline.retrieve_documents") as mock_retrieve, \
          patch("app.rag_pipeline.rerank") as mock_rerank, \
          patch("app.rag_pipeline._get_llm") as mock_llm, \
-         patch("app.rag_pipeline.rewrite_query", return_value="standalone"):
+         patch("app.rag_pipeline.rewrite_query", return_value=("standalone", [])):
         
         # Setup mocks
         mock_build.return_value = (MagicMock(), MagicMock(), MagicMock())
