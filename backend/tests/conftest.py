@@ -34,6 +34,22 @@ def temp_test_dir(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_metrics_file(tmp_path, monkeypatch):
+    """Redirect the metrics store to a per-test tmp file.
+
+    Without this, every test that touches app.metrics reads/writes the real
+    backend/metrics.json - overwriting production analytics history with
+    test data (e.g. a "Test Async" query polluting the live dashboard).
+    """
+    import app.metrics as metrics_module
+
+    tmp_metrics_file = str(tmp_path / "metrics.json")
+    monkeypatch.setattr(metrics_module, "METRICS_FILE", tmp_metrics_file)
+    monkeypatch.setattr(metrics_module, "_METRICS_LOCKFILE", f"{tmp_metrics_file}.lock")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _clear_singleton_caches():
     """Clear module-level caches between tests.
 

@@ -5,6 +5,7 @@ derived averages/efficiency helpers exposed by :mod:`app.metrics`.
 """
 import os
 import pytest
+import app.metrics as metrics_module
 from app.metrics import (
     load_metrics,
     save_metrics,
@@ -18,22 +19,24 @@ from app.metrics import (
     get_retrieval_efficiency,
     get_generation_efficiency,
     reset_metrics,
-    METRICS_FILE
 )
 
 
 @pytest.fixture
 def clean_metrics():
-    """Ensure the metrics file is removed before and after a test."""
+    """Ensure the (per-test, tmp_path-isolated) metrics file is removed
+    before and after a test. Reads app.metrics.METRICS_FILE at call time so
+    this respects the `_isolate_metrics_file` autouse fixture in conftest.py
+    instead of touching the real production metrics.json."""
     # Clean up before test.
-    if os.path.exists(METRICS_FILE):
-        os.remove(METRICS_FILE)
-    
+    if os.path.exists(metrics_module.METRICS_FILE):
+        os.remove(metrics_module.METRICS_FILE)
+
     yield
-    
+
     # Clean up after test.
-    if os.path.exists(METRICS_FILE):
-        os.remove(METRICS_FILE)
+    if os.path.exists(metrics_module.METRICS_FILE):
+        os.remove(metrics_module.METRICS_FILE)
 
 
 def test_load_metrics_empty(clean_metrics):
@@ -267,7 +270,7 @@ class TestMetricsEdgeCases:
     def test_corrupted_metrics_file(self, clean_metrics):
         """Test loading corrupted metrics file"""
         # Write invalid JSON
-        with open(METRICS_FILE, 'w') as f:
+        with open(metrics_module.METRICS_FILE, 'w') as f:
             f.write("invalid json {{{")
         
         # Should return default metrics
