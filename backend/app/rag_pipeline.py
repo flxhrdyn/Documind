@@ -238,7 +238,7 @@ def rag_pipeline(question: str, history: Any) -> dict[str, Any]:
     max_attempts = 2
     for attempt in range(max_attempts):
         try:
-            standalone_query = rewrite_query(question, history)
+            standalone_query, fusion_queries = rewrite_query(question, history)
             logger.info(f"Standalone Query: {standalone_query}")
             exact_key = _get_exact_cache_key(standalone_query)
             cached, query_embedding = _lookup_cache(cache, standalone_query, exact_key)
@@ -267,7 +267,7 @@ def rag_pipeline(question: str, history: Any) -> dict[str, Any]:
             if query_embedding is None:
                 query_embedding = get_embeddings().embed_query(standalone_query)
 
-            result = _run_rag_pipeline_with_query(standalone_query, question, history)
+            result = _run_rag_pipeline_with_query(standalone_query, question, history, fusion_queries)
             # Don't cache "nothing relevant found" - retrieval may succeed once
             # more documents are indexed later (mirrors the streaming path,
             # which also skips caching on empty retrieval).
@@ -284,7 +284,9 @@ def rag_pipeline(question: str, history: Any) -> dict[str, Any]:
     raise RuntimeError("Unexpected RAG retry state")
 
 
-def _run_rag_pipeline_with_query(standalone_query: str, original_question: str, history: Any) -> dict[str, Any]:
+def _run_rag_pipeline_with_query(
+    standalone_query: str, original_question: str, history: Any, fusion_queries: list[str] = ()
+) -> dict[str, Any]:
     """Internal helper for core RAG steps."""
     total_start = time.monotonic()
     retriever, vectorstore, client = build_retriever()
@@ -294,6 +296,7 @@ def _run_rag_pipeline_with_query(standalone_query: str, original_question: str, 
         standalone_query,
         dense_retriever=retriever,
         client=client,
+        fusion_queries=fusion_queries,
     )
 
     if not retrieved_docs:
@@ -385,7 +388,7 @@ async def rag_pipeline_stream_async(query: str, chat_history: list[str]):
 
     try:
         yield json.dumps({"step": "rewriting"}) + "\n"
-        standalone_query = await rewrite_query_async(query, chat_history)
+        standalone_query, fusion_queries = await rewrite_query_async(query, chat_history)
         logger.info(f"Stream Standalone Query: {standalone_query}")
         exact_key = _get_exact_cache_key(standalone_query)
 
@@ -438,12 +441,16 @@ async def rag_pipeline_stream_async(query: str, chat_history: list[str]):
         
         retrieval_start = time.monotonic()
         try:
-            docs, metadata = await retrieve_documents_async(standalone_query, dense_retriever=retriever, client=client)
+            docs, metadata = await retrieve_documents_async(
+                standalone_query, dense_retriever=retriever, client=client, fusion_queries=fusion_queries
+            )
         except Exception as e:
             if is_qdrant_client_closed_error(e):
                 close_qdrant_client()
                 retriever, vectorstore, client = build_retriever()
-                docs, metadata = await retrieve_documents_async(standalone_query, dense_retriever=retriever, client=client)
+                docs, metadata = await retrieve_documents_async(
+                    standalone_query, dense_retriever=retriever, client=client, fusion_queries=fusion_queries
+                )
             else:
                 raise
         retrieval_time = time.monotonic() - retrieval_start
